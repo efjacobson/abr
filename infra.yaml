@@ -9,3 +9,39 @@ Resources:
     Properties:
       LogGroupName: better-than-bad-its-wood
       RetentionInDays: 1
+
+  VolatileBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::AccountId}-abr-volatile'
+      AccessControl: BucketOwnerFullControl
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 2
+            Status: Enabled
+
+  LambdaFunctionBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::AccountId}-abr-lambda-functions'
+      AccessControl: BucketOwnerFullControl
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 2
+            Status: Enabled
+
+Outputs:
+  VolatileBucketName:
+    Value: !Ref 'VolatileBucket'
+  LambdaFunctionBucketName:
+    Value: !Ref 'LambdaFunctionBucket'
