@@ -1,8 +1,12 @@
 #! /bin/bash
 
 dry_run=true
-stack_name=abr
+json_config=
 region=us-east-1
+stack_name=abr
+
+config_file="./.$stack_name-stack-outputs.json"
+default_aws_arguments="--region $region --profile personal"
 
 display_help() {
   echo "
@@ -35,46 +39,66 @@ for opt in "$@"; do
 done
 
 deploy_stack() {
-  default_arguments="--region $region --profile personal"
-
-  deploy_command="aws cloudformation deploy --template-file ./infra.yaml --stack-name $stack_name $default_arguments"
+  local deploy_command="aws cloudformation deploy --template-file ./infra.yaml --stack-name $stack_name $default_aws_arguments"
   if $dry_run; then
     deploy_command+=' --no-execute-changeset'
   fi
 
-  deploy_output=$(eval "$deploy_command")
-  echo "$deploy_output"
-  ultimate_line=$(echo "$deploy_output" | tail -n1)
+  local deploy_output && deploy_output=$(eval "$deploy_command")
+  echo "$deploy_output" | bat
+  local ultimate_line && ultimate_line=$(echo "$deploy_output" | tail -n1)
   if [ "No changes to deploy. Stack $stack_name is up to date" == "$ultimate_line" ]; then
     return
   fi
 
   if $dry_run; then
-    deploy_command="$ultimate_line $default_arguments"
+    local describe_command="$ultimate_line $default_aws_arguments"
     printf '\n%s\n\n' 'dry run, change set description:'
-    eval "$deploy_command"
+    local describe_output && describe_output=$(eval "$describe_command")
+    echo "$describe_output" | bat
     return
   fi
 
-  outputs=$(eval "aws cloudformation describe-stacks $default_arguments \
+  set_config
+}
+
+get_lambda_bucket_name() {
+  if [ '' == "$json_config" ]; then
+    if [ -f $config_file ]; then
+      json_config=$(jq <$config_file)
+    else
+      set_config
+    fi
+  fi
+  echo "$json_config" | jq -r '.LambdaFunctionBucketName'
+}
+
+upload_lambda_function_zips() {
+  local workdir && workdir="$(mktemp -d)"
+  find ./functions -type f -exec sh -c 'zip -j -X -q "$2"/$(basename "$1").zip "$1"' sh {} "$workdir" \;
+
+  local lambda_bucket && lambda_bucket=$(get_lambda_bucket_name)
+  for zip in "$workdir"/*; do
+    aws s3 cp "$zip" "s3://$lambda_bucket/$(basename "$zip")" --profile personal
+  done
+
+  rm -rf "$workdir"
+}
+
+set_config() {
+  local outputs && outputs=$(eval "aws cloudformation describe-stacks $default_aws_arguments \
     --stack-name $stack_name \
     --query \"Stacks[0].Outputs\"")
 
-  config='{'
+  json_config='{'
   while read -r OutputKey; do
     read -r OutputValue
-    config+="\"$OutputKey\":\"$OutputValue\","
+    json_config+="\"$OutputKey\":\"$OutputValue\","
   done < <(echo "$outputs" | jq -cr '.[] | (.OutputKey, .OutputValue)')
-  config=${config%?}
-  config+='}'
+  json_config=${json_config%?}
+  json_config+='}'
 
-  echo $config | jq '.' | yq -y >"./.$stack_name-stack-outputs.yaml"
-}
-
-deploy_lambda_functions() {
-  find ./functions -type f -exec zip -j -X -q '{}'.zip '{}' \;
-  # do the thing...
-  find ./functions -name '*.zip' -exec rm '{}' \;
+  echo "$json_config" >$config_file
 }
 
 main() {
@@ -89,7 +113,7 @@ main() {
   fi
 
   deploy_stack
-  deploy_lambda_functions
+  upload_lambda_function_zips
 }
 
 main
