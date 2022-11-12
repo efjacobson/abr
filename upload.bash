@@ -1,7 +1,7 @@
 #! /bin/bash
 
 dry_run=true
-volatile=true
+bucket=default
 stack_name=abr
 
 display_help() {
@@ -9,7 +9,7 @@ display_help() {
 Available options:
   --dry-run     Deploy as a dry run, aka the --dryrun flag
   --hot         Equivalent to --dry-run=false
-  --volatile    Upload to the volatile bucket
+  --bucket      The bucket to upload to
   --help        This message
 "
 }
@@ -25,10 +25,8 @@ parse_arguments() {
     --hot)
       dry_run=false
       ;;
-    --volatile=*)
-      if [ 'false' == "${opt#*=}" ]; then
-        volatile=false
-      fi
+    --bucket=*)
+      bucket="${opt#*=}"
       ;;
     --help)
       display_help
@@ -53,19 +51,19 @@ main() {
     exit
   fi
 
-  if ! $volatile; then
-    echo 'non-volatile uploads are not currently supported'
+  if [ 'default' != "$bucket" ]; then
+    echo 'non-default uploads are not currently supported'
     exit
   fi
 
-  volatile_bucket=$(yq -r '.VolatileBucketName' <".$stack_name-stack-outputs.yaml")
+  bucket_name=$(yq -r '.DefaultBucketName' <".$stack_name-stack-outputs.yaml")
 
-  if [ 'null' == "$volatile_bucket" ]; then
+  if [ 'null' == "$bucket_name" ]; then
     echo 'unable to determine bucket name'
     exit
   fi
 
-  dest="s3://$volatile_bucket"
+  dest="s3://$bucket_name"
   cmd="aws s3 cp $src $dest/$src --profile personal"
 
   if $dry_run; then

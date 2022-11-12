@@ -1,19 +1,20 @@
-AWSTemplateFormatVersion: "2010-09-09"
+AWSTemplateFormatVersion: 2010-09-09
 
-Description:
-  "an aerosol consisting of a visible mass of miniature liquid droplets, frozen crystals, or other particles suspended in the atmosphere of a planetary body or similar space."
+Description: an aerosol consisting of a visible mass of miniature liquid droplets, frozen crystals, or other particles suspended in the atmosphere of a planetary body or similar space.
 
 Resources:
   LogGroup:
     Type: AWS::Logs::LogGroup
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
     Properties:
       LogGroupName: better-than-bad-its-wood
       RetentionInDays: 1
 
-  VolatileBucket:
+  DefaultBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub '${AWS::AccountId}-abr-volatile'
+      BucketName: !Sub "${AWS::AccountId}-abr-default"
       AccessControl: BucketOwnerFullControl
       BucketEncryption:
         ServerSideEncryptionConfiguration:
@@ -24,11 +25,32 @@ Resources:
           - AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 2
             Status: Enabled
+
+  DefaultBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DefaultBucket
+      PolicyDocument:
+        Statement:
+          - Action:
+              - s3:GetObject
+            Effect: Allow
+            Resource: !Sub
+              - "arn:${AWS::Partition}:s3:::${Bucket}/*"
+              - Bucket: !Ref "DefaultBucket"
+            Principal:
+              CanonicalUser: !GetAtt CloudFrontOriginAccessIdentity.S3CanonicalUserId
+
+  CloudFrontOriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: DefaultBucketPolicyCloudFrontOriginAccessIdentity
 
   LambdaFunctionBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub '${AWS::AccountId}-abr-lambda-functions'
+      BucketName: !Sub "${AWS::AccountId}-abr-lambda-functions"
       AccessControl: BucketOwnerFullControl
       BucketEncryption:
         ServerSideEncryptionConfiguration:
@@ -40,8 +62,21 @@ Resources:
               DaysAfterInitiation: 2
             Status: Enabled
 
-Outputs:
-  VolatileBucketName:
-    Value: !Ref 'VolatileBucket'
-  LambdaFunctionBucketName:
-    Value: !Ref 'LambdaFunctionBucket'
+  DefaultDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultCacheBehavior:
+          CachePolicyId: "658327ea-f89d-4fab-a63d-7e88639e58f6" # CachingOptimized: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-cache-policies.html
+          TargetOriginId: !Ref DefaultBucket
+          ViewerProtocolPolicy: redirect-to-https
+        Origins:
+          - DomainName: !Sub
+              - "${Bucket}.s3.${AWS::Region}.amazonaws.com"
+              - Bucket: !Ref DefaultBucket
+            Id: !Ref DefaultBucket
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub
+                - "origin-access-identity/cloudfront/${Identity}"
+                - Identity: !Ref CloudFrontOriginAccessIdentity
