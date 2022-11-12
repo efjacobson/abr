@@ -11,10 +11,10 @@ Resources:
       LogGroupName: better-than-bad-its-wood
       RetentionInDays: 1
 
-  DefaultBucket:
+  LambdaFunctionBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "${AWS::AccountId}-abr-default"
+      BucketName: !Sub "${AWS::AccountId}-${AWS::StackName}-lambda-functions"
       AccessControl: BucketOwnerFullControl
       BucketEncryption:
         ServerSideEncryptionConfiguration:
@@ -25,6 +25,26 @@ Resources:
           - AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 2
             Status: Enabled
+
+  DefaultBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::AccountId}-${AWS::StackName}-default"
+      AccessControl: BucketOwnerFullControl
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 2
+            Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: TRUE
+        BlockPublicPolicy: TRUE
+        IgnorePublicAcls: TRUE
+        RestrictPublicBuckets: TRUE
 
   DefaultBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -47,21 +67,6 @@ Resources:
       CloudFrontOriginAccessIdentityConfig:
         Comment: DefaultBucketPolicyCloudFrontOriginAccessIdentity
 
-  LambdaFunctionBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub "${AWS::AccountId}-abr-lambda-functions"
-      AccessControl: BucketOwnerFullControl
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      LifecycleConfiguration:
-        Rules:
-          - AbortIncompleteMultipartUpload:
-              DaysAfterInitiation: 2
-            Status: Enabled
-
   DefaultDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
@@ -73,7 +78,7 @@ Resources:
           ViewerProtocolPolicy: redirect-to-https
         Origins:
           - DomainName: !Sub
-              - "${Bucket}.s3.${AWS::Region}.amazonaws.com"
+              - "${Bucket}.s3.${AWS::Region}.${AWS::URLSuffix}"
               - Bucket: !Ref DefaultBucket
             Id: !Ref DefaultBucket
             S3OriginConfig:

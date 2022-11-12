@@ -1,8 +1,12 @@
 #! /bin/bash
 
-dry_run=true
 bucket=default
+dry_run=true
+region='us-east-1'
 stack_name=abr
+
+config_file="./.$stack_name-stack-outputs.json"
+default_aws_arguments="--region $region --profile personal"
 
 display_help() {
   echo "
@@ -40,7 +44,28 @@ parse_arguments() {
   done
 }
 
+set_config() {
+  local outputs && outputs=$(eval "aws cloudformation describe-stacks $default_aws_arguments \
+    --stack-name $stack_name \
+    --query \"Stacks[0].Outputs\"")
+
+  json_config='{'
+  while read -r OutputKey; do
+    read -r OutputValue
+    json_config+="\"$OutputKey\":\"$OutputValue\","
+  done < <(echo "$outputs" | jq -cr '.[] | (.OutputKey, .OutputValue)')
+  json_config=${json_config%?}
+  json_config+='}'
+
+  echo "$json_config" >$config_file
+}
+
 main() {
+  if ! [ -x "$(command -v jq)" ]; then
+    echo 'exiting early: jq not installed'
+    exit
+  fi
+
   if [ '' == "$src" ]; then
     echo 'a path to the src is required'
     exit
@@ -56,7 +81,11 @@ main() {
     exit
   fi
 
-  bucket_name=$(yq -r '.DefaultBucketName' <".$stack_name-stack-outputs.yaml")
+  if [ ! -d "$config_file" ]; then
+    set_config
+  fi
+
+  bucket_name=$(jq -r '.DefaultBucketRef' <$config_file)
 
   if [ 'null' == "$bucket_name" ]; then
     echo 'unable to determine bucket name'
