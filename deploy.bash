@@ -47,7 +47,7 @@ create_deploy_template() {
   local AWSCloudFrontCloudFrontOriginAccessIdentity_output_GetAtt_fields=('Id' 'S3CanonicalUserId')
   local AWSLogsLogGroup_output_GetAtt_fields=('Arn')
 
-  local tmp_file='infra.tmp.json'
+  local tmp_file='infra.tmp.json' # todo: use actual tmp file here
   if [ -d "$tmp_file" ]; then
     rm "$tmp_file"
   fi
