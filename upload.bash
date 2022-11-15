@@ -1,11 +1,15 @@
 #! /bin/bash
 
+region=
+stack_name=
+here="$(dirname "$(realpath "$0")")"
+
+# shellcheck source=/dev/null
+source "$here/shared.bash"
+
 bucket=default
 dry_run=true
-region='us-east-1'
-stack_name=abr
 
-config_file="./.$stack_name-stack-outputs.json"
 default_aws_arguments="--region $region --profile personal"
 
 display_help() {

@@ -1,12 +1,16 @@
 #! /bin/bash
 
-template='./infra.yaml'
-deploy_template='./infra.deploy.yaml'
-json_config=
-region='us-east-1'
-stack_name='abr'
+config_file=
+region=
+here="$(dirname "$(realpath "$0")")"
 
-config_file="./.$stack_name-stack-outputs.json"
+# shellcheck source=/dev/null
+source "$here/shared.bash"
+
+template="$here/infra.yaml"
+deploy_template=$(mktemp)
+json_config=
+
 default_aws_arguments="--region $region --profile personal"
 
 dry_run=true
@@ -46,12 +50,10 @@ create_deploy_template() {
   local AWSCloudFrontDistribution_output_GetAtt_fields=('DomainName' 'Id')
   local AWSCloudFrontCloudFrontOriginAccessIdentity_output_GetAtt_fields=('Id' 'S3CanonicalUserId')
   local AWSLogsLogGroup_output_GetAtt_fields=('Arn')
+  local AWSServerlessFunction_output_GetAtt_fields=('Arn')
 
-  local tmp_file='infra.tmp.json' # todo: use actual tmp file here
-  if [ -d "$tmp_file" ]; then
-    rm "$tmp_file"
-  fi
-  echo '{}' >"$tmp_file"
+  local temp_file_0 && temp_file_0="$(mktemp)"
+  echo '{}' >"$temp_file_0"
   local outputs && outputs=$(echo '{}' | jq)
   yq '.Resources | keys[]' "$template" | while read -r resource; do
     local raw_resource && raw_resource=$(echo "$resource" | sed 's/"//g')
@@ -71,21 +73,22 @@ create_deploy_template() {
       echo "no config for $config!"
     fi
     local insert_filter=". + {\"Outputs\":$outputs}"
-    local result && result=$(cat "$tmp_file" | yq "$insert_filter")
-    echo "$result" >"$tmp_file"
+    local result && result=$(cat "$temp_file_0" | yq "$insert_filter")
+    echo "$result" >"$temp_file_0"
   done
-  local final_outputs && final_outputs=$(cat "$tmp_file" | yq -y | sed -E 's/(Value: '\'')/Value: /g' | sed -E 's/^(.+)Value(.+)('\'')$/\1Value\2/g')
-  echo "$final_outputs" >"$tmp_file"
+  local final_outputs && final_outputs=$(cat "$temp_file_0" | yq -y | sed -E 's/(Value: '\'')/Value: /g' | sed -E 's/^(.+)Value(.+)('\'')$/\1Value\2/g')
+  echo "$final_outputs" >"$temp_file_0"
   cp "$template" "$deploy_template"
   echo "" >>"$deploy_template"
-  cat "$deploy_template" "$tmp_file" >'even-more-tmp-file'
-  cp 'even-more-tmp-file' "$deploy_template"
-  rm 'even-more-tmp-file' "$tmp_file"
+  local temp_file_0 && temp_file_1="$(mktemp)"
+  cat "$deploy_template" "$temp_file_0" >"$temp_file_1"
+  cp "$temp_file_1" "$deploy_template"
+  rm "$temp_file_1" "$temp_file_0"
 }
 
 deploy_stack() {
   create_deploy_template
-  local deploy_command="aws cloudformation deploy --template-file $deploy_template  --stack-name $stack_name $default_aws_arguments"
+  local deploy_command="aws cloudformation deploy --template-file $deploy_template  --stack-name $stack_name --capabilities CAPABILITY_IAM $default_aws_arguments"
   if $dry_run; then
     deploy_command+=' --no-execute-changeset'
   fi
@@ -98,7 +101,8 @@ deploy_stack() {
   fi
   echo "$deploy_output" | bat --file-name="$label" --pager=none
   local ultimate_line && ultimate_line=$(echo "$deploy_output" | tail -n1)
-  if [ "No changes to deploy. Stack $stack_name is up to date" == "$ultimate_line" ]; then
+  local regex='^aws cloudformation describe-change-set'
+  if [[ ! "$ultimate_line" =~ $regex ]]; then
     return
   fi
 
@@ -118,8 +122,8 @@ deploy_stack() {
 
 get_lambda_bucket_name() {
   if [ '' == "$json_config" ]; then
-    if [ -f $config_file ]; then
-      json_config=$(jq <$config_file)
+    if [ -f "$config_file" ]; then
+      json_config=$(jq <"$config_file")
     else
       set_config
     fi
@@ -128,20 +132,32 @@ get_lambda_bucket_name() {
 }
 
 upload_lambda_functions() {
-  local workdir && workdir="$(mktemp -d)"
-  local dir
-  for filepath in ./functions/*/*; do
-    file=$(basename "$filepath")
-    dir=$(dirname "$(realpath "$filepath")")
-    version=${dir##*/}
-    if [ ! -d "$workdir/$version" ]; then
-      mkdir "$workdir/$version"
+  local tempdir && tempdir="$(mktemp -d)"
+  local tempvar
+  while IFS= read -r filepath; do
+    tempvar=$(dirname "$(realpath "$filepath")")
+    version=${tempvar##*/}
+    tempvar=$(dirname "$(dirname "$(realpath "$filepath")")")
+    function_name=${tempvar##*/}
+    dir="$tempdir/$function_name/$version"
+    if [ ! -d "$dir" ]; then
+      mkdir -p "$dir"
     fi
-    zip -j -X -q "$workdir/$version/$file.zip" "$filepath"
+    cp "$filepath" "$dir/index.js"
+    zip -r -j -X -q "$dir/index.js.zip" "$dir"
+    rm "$dir/index.js"
+  done < <(find "$here/lambda-functions/." -name '*.js')
+
+  local latest
+  for function in "$tempdir"/*; do
+    for version in "$function"/*; do
+      latest="$version"
+    done
+    cp -r "$latest" "$function/latest"
   done
 
   local lambda_bucket && lambda_bucket=$(get_lambda_bucket_name)
-  local cmd && cmd="aws s3 sync $workdir s3://$lambda_bucket --delete --profile personal"
+  local cmd && cmd="aws s3 sync $tempdir s3://$lambda_bucket --delete --size-only --profile personal"
   if $dry_run; then
     cmd+=' --dryrun'
   fi
@@ -153,7 +169,7 @@ upload_lambda_functions() {
   fi
   echo "$sync_output" | bat --file-name="$label" --pager=none
 
-  rm -rf "$workdir"
+  rm -rf "$tempdir"
 }
 
 set_config() {
@@ -169,7 +185,7 @@ set_config() {
   json_config=${json_config%?}
   json_config+='}'
 
-  echo "$json_config" >$config_file
+  echo "$json_config" >"$config_file"
 }
 
 main() {

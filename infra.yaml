@@ -1,30 +1,14 @@
 AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
 
 Description: an aerosol consisting of a visible mass of miniature liquid droplets, frozen crystals, or other particles suspended in the atmosphere of a planetary body or similar space.
 
 Resources:
   LogGroup:
     Type: AWS::Logs::LogGroup
-    UpdateReplacePolicy: Delete
-    DeletionPolicy: Delete
     Properties:
       LogGroupName: better-than-bad-its-wood
       RetentionInDays: 1
-
-  LambdaFunctionBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub "${AWS::AccountId}-${AWS::StackName}-lambda-functions"
-      AccessControl: BucketOwnerFullControl
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      LifecycleConfiguration:
-        Rules:
-          - AbortIncompleteMultipartUpload:
-              DaysAfterInitiation: 2
-            Status: Enabled
 
   DefaultBucket:
     Type: AWS::S3::Bucket
@@ -59,29 +43,90 @@ Resources:
               - "arn:${AWS::Partition}:s3:::${Bucket}/*"
               - Bucket: !Ref "DefaultBucket"
             Principal:
-              CanonicalUser: !GetAtt CloudFrontOriginAccessIdentity.S3CanonicalUserId
+              CanonicalUser: !GetAtt DefaultBucketCloudFrontOriginAccessIdentity.S3CanonicalUserId
 
-  CloudFrontOriginAccessIdentity:
+  DefaultBucketCloudFrontOriginAccessIdentity:
     Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
     Properties:
       CloudFrontOriginAccessIdentityConfig:
-        Comment: DefaultBucketPolicyCloudFrontOriginAccessIdentity
+        Comment: DefaultBucketCloudFrontOriginAccessIdentity
 
-  DefaultDistribution:
+  LambdaFunctionBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::AccountId}-${AWS::StackName}-lambda-functions"
+      AccessControl: BucketOwnerFullControl
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 2
+            Status: Enabled
+
+  LambdaFunctionBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LambdaFunctionBucket
+      PolicyDocument:
+        Statement:
+          - Action:
+              - s3:GetObject
+            Effect: Allow
+            Resource: !Sub
+              - "arn:${AWS::Partition}:s3:::${Bucket}/*"
+              - Bucket: !Ref "LambdaFunctionBucket"
+            Principal:
+              CanonicalUser: !GetAtt LambdaFunctionBucketCloudFrontOriginAccessIdentity.S3CanonicalUserId
+
+  LambdaFunctionBucketCloudFrontOriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: LambdaFunctionBucketCloudFrontOriginAccessIdentity
+
+  PrimaryDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
       DistributionConfig:
         Enabled: true
         DefaultCacheBehavior:
-          CachePolicyId: "658327ea-f89d-4fab-a63d-7e88639e58f6" # CachingOptimized: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-cache-policies.html
           TargetOriginId: !Ref DefaultBucket
+          CachePolicyId: "658327ea-f89d-4fab-a63d-7e88639e58f6" # CachingOptimized: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-cache-policies.html
           ViewerProtocolPolicy: redirect-to-https
         Origins:
-          - DomainName: !Sub
+          - Id: !Ref DefaultBucket
+            DomainName: !Sub
               - "${Bucket}.s3.${AWS::Region}.${AWS::URLSuffix}"
               - Bucket: !Ref DefaultBucket
-            Id: !Ref DefaultBucket
             S3OriginConfig:
               OriginAccessIdentity: !Sub
                 - "origin-access-identity/cloudfront/${Identity}"
-                - Identity: !Ref CloudFrontOriginAccessIdentity
+                - Identity: !Ref DefaultBucketCloudFrontOriginAccessIdentity
+
+  # RoleRole:
+  #   Type: AWS::IAM::Role
+  #   Properties:
+  #     AssumeRolePolicyDocument:
+  #       Version: '2012-10-17'
+  #       Statement:
+  #         - Effect: Allow
+  #           Principal:
+  #             Service:
+  #               - edgelambda.amazonaws.com
+  #               - lambda.amazonaws.com
+  #           Action:
+  #             - sts:AssumeRole
+  #     ManagedPolicyArns:
+  #       - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+
+  DefaultBucketOnCreateObjectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      Runtime: nodejs16.x
+      CodeUri:
+        Bucket: !Ref LambdaFunctionBucket
+        Key: default-bucket-on-create-object/latest/index.js.zip
