@@ -4,12 +4,6 @@ Transform: AWS::Serverless-2016-10-31
 Description: an aerosol consisting of a visible mass of miniature liquid droplets, frozen crystals, or other particles suspended in the atmosphere of a planetary body or similar space.
 
 Resources:
-  LogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: better-than-bad-its-wood
-      RetentionInDays: 1
-
   DefaultBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -24,6 +18,15 @@ Resources:
           - AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 2
             Status: Enabled
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: image
+            Function: !GetAtt DefaultBucketOnCreateObjectFunction.Arn
       PublicAccessBlockConfiguration:
         BlockPublicAcls: TRUE
         BlockPublicPolicy: TRUE
@@ -65,27 +68,11 @@ Resources:
           - AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 2
             Status: Enabled
-
-  LambdaFunctionBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref LambdaFunctionBucket
-      PolicyDocument:
-        Statement:
-          - Action:
-              - s3:GetObject
-            Effect: Allow
-            Resource: !Sub
-              - "arn:${AWS::Partition}:s3:::${Bucket}/*"
-              - Bucket: !Ref "LambdaFunctionBucket"
-            Principal:
-              CanonicalUser: !GetAtt LambdaFunctionBucketCloudFrontOriginAccessIdentity.S3CanonicalUserId
-
-  LambdaFunctionBucketCloudFrontOriginAccessIdentity:
-    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
-    Properties:
-      CloudFrontOriginAccessIdentityConfig:
-        Comment: LambdaFunctionBucketCloudFrontOriginAccessIdentity
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: TRUE
+        BlockPublicPolicy: TRUE
+        IgnorePublicAcls: TRUE
+        RestrictPublicBuckets: TRUE
 
   PrimaryDistribution:
     Type: AWS::CloudFront::Distribution
@@ -106,27 +93,39 @@ Resources:
                 - "origin-access-identity/cloudfront/${Identity}"
                 - Identity: !Ref DefaultBucketCloudFrontOriginAccessIdentity
 
-  # RoleRole:
-  #   Type: AWS::IAM::Role
-  #   Properties:
-  #     AssumeRolePolicyDocument:
-  #       Version: '2012-10-17'
-  #       Statement:
-  #         - Effect: Allow
-  #           Principal:
-  #             Service:
-  #               - edgelambda.amazonaws.com
-  #               - lambda.amazonaws.com
-  #           Action:
-  #             - sts:AssumeRole
-  #     ManagedPolicyArns:
-  #       - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
-
-  DefaultBucketOnCreateObjectFunction:
-    Type: AWS::Serverless::Function
+  DefaultBucketOnCreateObjectFunctionPermission:
+    Type: AWS::Lambda::Permission
     Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt DefaultBucketOnCreateObjectFunction.Arn
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub
+        - "arn:${AWS::Partition}:s3:::${Bucket}"
+        - Bucket: !Ref "DefaultBucket"
+      SourceAccount: !Ref AWS::AccountId
+
+  DefaultBucketOnCreateObjectFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+  
+  DefaultBucketOnCreateObjectFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        S3Bucket: !Ref LambdaFunctionBucket
+        S3Key: default-bucket-on-create-object/latest/index.js.zip
       Handler: index.handler
+      PackageType: Zip
+      Role: !GetAtt DefaultBucketOnCreateObjectFunctionRole.Arn
       Runtime: nodejs16.x
-      CodeUri:
-        Bucket: !Ref LambdaFunctionBucket
-        Key: default-bucket-on-create-object/latest/index.js.zip

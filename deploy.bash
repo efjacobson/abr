@@ -2,6 +2,7 @@
 
 config_file=
 region=
+stack_name=
 here="$(dirname "$(realpath "$0")")"
 
 # shellcheck source=/dev/null
@@ -51,6 +52,8 @@ create_deploy_template() {
   local AWSCloudFrontCloudFrontOriginAccessIdentity_output_GetAtt_fields=('Id' 'S3CanonicalUserId')
   local AWSLogsLogGroup_output_GetAtt_fields=('Arn')
   local AWSServerlessFunction_output_GetAtt_fields=('Arn')
+  local AWSLambdaFunction_output_GetAtt_fields=('Arn')
+  local AWSIAMRole_output_GetAtt_fields=('Arn' 'RoleId')
 
   local temp_file_0 && temp_file_0="$(mktemp)"
   echo '{}' >"$temp_file_0"
