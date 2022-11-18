@@ -1,5 +1,6 @@
 #! /bin/bash
 
+config_file=
 region=
 stack_name=
 here="$(dirname "$(realpath "$0")")"
@@ -61,7 +62,7 @@ set_config() {
   json_config=${json_config%?}
   json_config+='}'
 
-  echo "$json_config" >$config_file
+  echo "$json_config" >"$config_file"
 }
 
 main() {
@@ -89,7 +90,7 @@ main() {
     set_config
   fi
 
-  bucket_name=$(jq -r '.DefaultBucketRef' <$config_file)
+  bucket_name=$(jq -r '.DefaultBucketRef' <"$config_file")
 
   if [ 'null' == "$bucket_name" ]; then
     echo 'unable to determine bucket name'

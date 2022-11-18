@@ -72,7 +72,7 @@ create_deploy_template() {
       outputs=$(echo "$outputs" | jq "$GetAtt_filter")
       count=$((count + 1))
     done
-    if [ "$count" == 0 ] && [ 'AWSS3BucketPolicy' != "$config" ]; then
+    if [ "$count" == 0 ] && [ 'AWSS3BucketPolicy' != "$config" ] && [ 'AWSLambdaPermission' != "$config" ]; then
       echo "no config for $config!"
     fi
     local insert_filter=". + {\"Outputs\":$outputs}"
@@ -91,11 +91,20 @@ create_deploy_template() {
 
 deploy_stack() {
   create_deploy_template
-  local deploy_command="aws cloudformation deploy --template-file $deploy_template  --stack-name $stack_name --capabilities CAPABILITY_IAM $default_aws_arguments"
+  local get_function_arn_command="aws lambda get-function --function-name $stack_name-DefaultBucketOnCreateObjectFunction $default_aws_arguments"
+  local get_function_arn_output && get_function_arn_output=$(eval "$get_function_arn_command")
+  local regex='^An error occurred'
+  local parameter_overrides=
+  if [[ ! "$get_function_arn_output" =~ $regex ]]; then
+    parameter_overrides="--parameter-overrides DefaultBucketOnCreateObjectFunctionArn=$(echo "$get_function_arn_output" | jq -r '.Configuration.FunctionArn')"
+  fi
+
+  local deploy_command="aws cloudformation deploy --template-file $deploy_template  --stack-name $stack_name --capabilities CAPABILITY_IAM $parameter_overrides $default_aws_arguments"
   if $dry_run; then
     deploy_command+=' --no-execute-changeset'
   fi
 
+  echo 'deploying...'
   local deploy_output && deploy_output=$(eval "$deploy_command")
   rm "$deploy_template"
   local label='aws cloudformation deploy'
@@ -104,8 +113,9 @@ deploy_stack() {
   fi
   echo "$deploy_output" | bat --file-name="$label" --pager=none
   local ultimate_line && ultimate_line=$(echo "$deploy_output" | tail -n1)
-  local regex='^aws cloudformation describe-change-set'
+  regex='^aws cloudformation describe-change-set'
   if [[ ! "$ultimate_line" =~ $regex ]]; then
+    set_config
     return
   fi
 
@@ -117,6 +127,7 @@ deploy_stack() {
       label="[dry run] $label"
     fi
     echo "$describe_output" | bat --file-name="$label" --pager=none --language=json
+    echo 'exit without set_config'
     return
   fi
 
@@ -165,6 +176,7 @@ upload_lambda_functions() {
     cmd+=' --dryrun'
   fi
 
+  echo 'syncing functions...'
   local sync_output && sync_output=$(eval "$cmd")
   local label='aws s3 sync'
   if $dry_run; then
@@ -176,15 +188,18 @@ upload_lambda_functions() {
 }
 
 set_config() {
-  local outputs && outputs=$(eval "aws cloudformation describe-stacks $default_aws_arguments \
+  echo 'setting config...'
+  local describe_stacks_outputs && describe_stacks_outputs=$(eval "aws cloudformation describe-stacks $default_aws_arguments \
     --stack-name $stack_name \
     --query \"Stacks[0].Outputs\"")
+
+  # echo "$describe_stacks_outputs" | bat --file-name='aws cloudformation describe-stacks' --pager=none
 
   json_config='{'
   while read -r OutputKey; do
     read -r OutputValue
     json_config+="\"$OutputKey\":\"$OutputValue\","
-  done < <(echo "$outputs" | jq -cr '.[] | (.OutputKey, .OutputValue)')
+  done < <(echo "$describe_stacks_outputs" | jq -cr '.[] | (.OutputKey, .OutputValue)')
   json_config=${json_config%?}
   json_config+='}'
 

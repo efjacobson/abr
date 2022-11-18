@@ -3,6 +3,15 @@ Transform: AWS::Serverless-2016-10-31
 
 Description: an aerosol consisting of a visible mass of miniature liquid droplets, frozen crystals, or other particles suspended in the atmosphere of a planetary body or similar space.
 
+Parameters:
+  DefaultBucketOnCreateObjectFunctionArn:
+    Default: ''
+    Type: String
+    AllowedPattern: '^(arn:aws:lambda:us-east-1:458362456643:function:abr-DefaultBucketOnCreateObjectFunction)?$'
+
+Conditions:
+  DefaultBucketOnCreateObjectFunctionDoesNotExist: !Equals [!Ref 'DefaultBucketOnCreateObjectFunctionArn', '']
+
 Resources:
   DefaultBucket:
     Type: AWS::S3::Bucket
@@ -18,15 +27,17 @@ Resources:
           - AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 2
             Status: Enabled
-      NotificationConfiguration:
-        LambdaConfigurations:
+      NotificationConfiguration: !If
+        - DefaultBucketOnCreateObjectFunctionDoesNotExist
+        - !Ref 'AWS::NoValue'
+        - LambdaConfigurations:
           - Event: s3:ObjectCreated:*
             Filter:
               S3Key:
                 Rules:
                   - Name: prefix
                     Value: image
-            Function: !GetAtt DefaultBucketOnCreateObjectFunction.Arn
+            Function: !Sub "${DefaultBucketOnCreateObjectFunctionArn}"
       PublicAccessBlockConfiguration:
         BlockPublicAcls: TRUE
         BlockPublicPolicy: TRUE
@@ -107,21 +118,40 @@ Resources:
   DefaultBucketOnCreateObjectFunctionRole:
     Type: AWS::IAM::Role
     Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
-          - Action:
+          - Effect: Allow
+            Action:
               - sts:AssumeRole
-            Effect: Allow
             Principal:
               Service:
                 - lambda.amazonaws.com
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-  
+      Policies:
+        - PolicyName: LogGroupAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*"
+        - PolicyName: LogStreamAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnCreateObjectFunction:*"
+
   DefaultBucketOnCreateObjectFunction:
     Type: AWS::Lambda::Function
     Properties:
+      FunctionName: !Sub "${AWS::StackName}-DefaultBucketOnCreateObjectFunction"
       Code:
         S3Bucket: !Ref LambdaFunctionBucket
         S3Key: default-bucket-on-create-object/latest/index.js.zip
