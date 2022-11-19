@@ -90,15 +90,20 @@ create_deploy_template() {
 }
 
 deploy_stack() {
+  local parameter_overrides="$1"
   create_deploy_template
+  # might make sense to look at the stack outputs instead
   local get_function_arn_command="aws lambda get-function --function-name $stack_name-DefaultBucketOnCreateObjectFunction $default_aws_arguments"
   local get_function_arn_output && get_function_arn_output=$(eval "$get_function_arn_command")
   local regex='^An error occurred'
-  local parameter_overrides=
+
   if [[ ! "$get_function_arn_output" =~ $regex ]]; then
-    parameter_overrides="--parameter-overrides DefaultBucketOnCreateObjectFunctionArn=$(echo "$get_function_arn_output" | jq -r '.Configuration.FunctionArn')"
+    parameter_overrides+=" DefaultBucketOnCreateObjectFunctionArn=$(echo "$get_function_arn_output" | jq -r '.Configuration.FunctionArn')"
   fi
 
+  if [ '' != "$parameter_overrides" ]; then
+    parameter_overrides="--parameter-overrides $parameter_overrides"
+  fi
   local deploy_command="aws cloudformation deploy --template-file $deploy_template  --stack-name $stack_name --capabilities CAPABILITY_IAM $parameter_overrides $default_aws_arguments"
   if $dry_run; then
     deploy_command+=' --no-execute-changeset'
@@ -107,7 +112,7 @@ deploy_stack() {
   echo 'deploying...'
   local deploy_output && deploy_output=$(eval "$deploy_command")
   rm "$deploy_template"
-  local label='aws cloudformation deploy'
+  local label=deploy_command
   if $dry_run; then
     label="[dry run] $label"
   fi
@@ -122,7 +127,7 @@ deploy_stack() {
   if $dry_run; then
     local describe_command="$ultimate_line $default_aws_arguments"
     local describe_output && describe_output=$(eval "$describe_command")
-    label='aws cloudformation describe-change-set'
+    label=describe_command
     if $dry_run; then
       label="[dry run] $label"
     fi
@@ -145,7 +150,17 @@ get_lambda_bucket_name() {
   echo "$json_config" | jq -r '.LambdaFunctionBucketRef'
 }
 
+get_latest_version() {
+  local function="$1"
+  local latest
+  for version in "$here/lambda-functions/$function"/*; do
+    latest=${version##*/}
+  done
+  echo "$latest"
+}
+
 upload_lambda_functions() {
+  rm -rf "$here/lambda-functions/latest"
   local tempdir && tempdir="$(mktemp -d)"
   local tempvar
   while IFS= read -r filepath; do
@@ -162,23 +177,23 @@ upload_lambda_functions() {
     rm "$dir/index.js"
   done < <(find "$here/lambda-functions/." -name '*.js')
 
-  local latest
+  local function_name
   for function in "$tempdir"/*; do
-    for version in "$function"/*; do
-      latest="$version"
-    done
-    cp -r "$latest" "$function/latest"
+    function_name="${function##*/}"
+    cp -r "$function/$(get_latest_version "$function_name")/index.js.zip" "$function/latest"
+    rm -rf "$here/lambda-functions/$function_name/latest"
+    unzip "$function/latest/index.js.zip" -d "$here/lambda-functions/$function_name/latest"
   done
 
   local lambda_bucket && lambda_bucket=$(get_lambda_bucket_name)
-  local cmd && cmd="aws s3 sync $tempdir s3://$lambda_bucket --delete --size-only --profile personal"
+  local sync_command && sync_command="aws s3 sync $tempdir s3://$lambda_bucket --delete --size-only --profile personal"
   if $dry_run; then
-    cmd+=' --dryrun'
+    sync_command+=' --dryrun'
   fi
 
   echo 'syncing functions...'
-  local sync_output && sync_output=$(eval "$cmd")
-  local label='aws s3 sync'
+  local sync_output && sync_output=$(eval "$sync_command")
+  local label=sync_command
   if $dry_run; then
     label="[dry run] $label"
   fi
@@ -217,8 +232,19 @@ main() {
     exit
   fi
 
-  deploy_stack
-  upload_lambda_functions
+  latest_default_bucket_on_create_object=$(get_latest_version default-bucket-on-create-object)
+  local parameter_overrides
+  if [ '' != "$latest_default_bucket_on_create_object" ]; then
+    parameter_overrides="DefaultBucketOnCreateObjectFunctionVersion=$latest_default_bucket_on_create_object"
+  fi
+
+  if [ '' == "$(aws s3api head-bucket --bucket 458362456643-abr-lambda-functions --profile personal --region=us-east-1 2>&1 >/dev/null)" ]; then
+    upload_lambda_functions
+    deploy_stack "$parameter_overrides"
+  else
+    deploy_stack "$parameter_overrides"
+    upload_lambda_functions
+  fi
 }
 
 main

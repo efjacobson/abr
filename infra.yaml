@@ -7,7 +7,14 @@ Parameters:
   DefaultBucketOnCreateObjectFunctionArn:
     Default: ''
     Type: String
-    AllowedPattern: '^(arn:aws:lambda:us-east-1:458362456643:function:abr-DefaultBucketOnCreateObjectFunction)?$'
+    # AllowedPattern: '^(arn:aws:lambda:us-east-1:458362456643:function:abr-DefaultBucketOnCreateObjectFunction)?$'
+    AllowedValues:
+      - ''
+      - arn:aws:lambda:us-east-1:458362456643:function:abr-DefaultBucketOnCreateObjectFunction
+  
+  DefaultBucketOnCreateObjectFunctionVersion:
+    Type: String
+    AllowedPattern: '^v\d\.\d\.\d'
 
 Conditions:
   DefaultBucketOnCreateObjectFunctionDoesNotExist: !Equals [!Ref 'DefaultBucketOnCreateObjectFunctionArn', '']
@@ -154,8 +161,12 @@ Resources:
       FunctionName: !Sub "${AWS::StackName}-DefaultBucketOnCreateObjectFunction"
       Code:
         S3Bucket: !Ref LambdaFunctionBucket
-        S3Key: default-bucket-on-create-object/latest/index.js.zip
+        # S3Key: !Sub "default-bucket-on-create-object/${Version}/index.js.zip"
+        S3Key: !Sub
+          - "default-bucket-on-create-object/${Version}/index.js.zip"
+          - Version: !Ref DefaultBucketOnCreateObjectFunctionVersion
       Handler: index.handler
       PackageType: Zip
       Role: !GetAtt DefaultBucketOnCreateObjectFunctionRole.Arn
-      Runtime: nodejs16.x
+      Runtime: nodejs14.x
+      # Runtime: nodejs16.x
