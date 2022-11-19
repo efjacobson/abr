@@ -1,20 +1,12 @@
 #! /bin/bash
 
-config_file=
+default_aws_arguments=
+deploy_template=$(mktemp)
+dry_run=true
+here="$(dirname "$(realpath "$0")")"
 region=
 stack_name=
-here="$(dirname "$(realpath "$0")")"
-
-# shellcheck source=/dev/null
-source "$here/shared.bash"
-
 template="$here/infra.yaml"
-deploy_template=$(mktemp)
-json_config=
-
-default_aws_arguments="--region $region --profile personal"
-
-dry_run=true
 
 display_help() {
   echo "
@@ -92,19 +84,17 @@ create_deploy_template() {
 deploy_stack() {
   local parameter_overrides="$1"
   create_deploy_template
-  # might make sense to look at the stack outputs instead
-  local get_function_arn_command="aws lambda get-function --function-name $stack_name-DefaultBucketOnCreateObjectFunction $default_aws_arguments"
-  local get_function_arn_output && get_function_arn_output=$(eval "$get_function_arn_command")
-  local regex='^An error occurred'
 
-  if [[ ! "$get_function_arn_output" =~ $regex ]]; then
-    parameter_overrides+=" DefaultBucketOnCreateObjectFunctionArn=$(echo "$get_function_arn_output" | jq -r '.Configuration.FunctionArn')"
-  fi
+  parameter_overrides+=" DefaultBucketOnCreateObjectFunctionArn=$(get_function_arn 'DefaultBucketOnCreateObjectFunction')"
+  parameter_overrides="--parameter-overrides $parameter_overrides"
 
-  if [ '' != "$parameter_overrides" ]; then
-    parameter_overrides="--parameter-overrides $parameter_overrides"
-  fi
-  local deploy_command="aws cloudformation deploy --template-file $deploy_template  --stack-name $stack_name --capabilities CAPABILITY_IAM $parameter_overrides $default_aws_arguments"
+  local deploy_command="aws cloudformation deploy \
+    --template-file $deploy_template  \
+    --stack-name $stack_name \
+    --capabilities CAPABILITY_IAM \
+    $parameter_overrides \
+    $default_aws_arguments"
+
   if $dry_run; then
     deploy_command+=' --no-execute-changeset'
   fi
@@ -112,7 +102,7 @@ deploy_stack() {
   echo 'deploying...'
   local deploy_output && deploy_output=$(eval "$deploy_command")
   rm "$deploy_template"
-  local label=deploy_command
+  local label="$deploy_command"
   if $dry_run; then
     label="[dry run] $label"
   fi
@@ -120,7 +110,6 @@ deploy_stack() {
   local ultimate_line && ultimate_line=$(echo "$deploy_output" | tail -n1)
   regex='^aws cloudformation describe-change-set'
   if [[ ! "$ultimate_line" =~ $regex ]]; then
-    set_config
     return
   fi
 
@@ -132,22 +121,10 @@ deploy_stack() {
       label="[dry run] $label"
     fi
     echo "$describe_output" | bat --file-name="$label" --pager=none --language=json
-    echo 'exit without set_config'
     return
   fi
 
   set_config
-}
-
-get_lambda_bucket_name() {
-  if [ '' == "$json_config" ]; then
-    if [ -f "$config_file" ]; then
-      json_config=$(jq <"$config_file")
-    else
-      set_config
-    fi
-  fi
-  echo "$json_config" | jq -r '.LambdaFunctionBucketRef'
 }
 
 get_latest_version() {
@@ -182,43 +159,28 @@ upload_lambda_functions() {
     function_name="${function##*/}"
     cp -r "$function/$(get_latest_version "$function_name")/index.js.zip" "$function/latest"
     rm -rf "$here/lambda-functions/$function_name/latest"
-    unzip "$function/latest/index.js.zip" -d "$here/lambda-functions/$function_name/latest"
+    unzip "$function/latest/index.js.zip" -d "$here/lambda-functions/$function_name/latest" >>/dev/null
   done
 
-  local lambda_bucket && lambda_bucket=$(get_lambda_bucket_name)
-  local sync_command && sync_command="aws s3 sync $tempdir s3://$lambda_bucket --delete --size-only --profile personal"
+  local sync_command && sync_command="\
+  aws s3 sync $tempdir s3://$(get_bucket_name 'LambdaFunction') \
+    --delete \
+    --size-only \
+    --profile personal"
+
   if $dry_run; then
     sync_command+=' --dryrun'
   fi
 
   echo 'syncing functions...'
   local sync_output && sync_output=$(eval "$sync_command")
-  local label=sync_command
+  local label="$sync_command"
   if $dry_run; then
     label="[dry run] $label"
   fi
   echo "$sync_output" | bat --file-name="$label" --pager=none
 
   rm -rf "$tempdir"
-}
-
-set_config() {
-  echo 'setting config...'
-  local describe_stacks_outputs && describe_stacks_outputs=$(eval "aws cloudformation describe-stacks $default_aws_arguments \
-    --stack-name $stack_name \
-    --query \"Stacks[0].Outputs\"")
-
-  # echo "$describe_stacks_outputs" | bat --file-name='aws cloudformation describe-stacks' --pager=none
-
-  json_config='{'
-  while read -r OutputKey; do
-    read -r OutputValue
-    json_config+="\"$OutputKey\":\"$OutputValue\","
-  done < <(echo "$describe_stacks_outputs" | jq -cr '.[] | (.OutputKey, .OutputValue)')
-  json_config=${json_config%?}
-  json_config+='}'
-
-  echo "$json_config" >"$config_file"
 }
 
 main() {
@@ -232,13 +194,16 @@ main() {
     exit
   fi
 
+  # shellcheck source=/dev/null
+  source "$here/shared.bash"
+
   latest_default_bucket_on_create_object=$(get_latest_version default-bucket-on-create-object)
   local parameter_overrides
   if [ '' != "$latest_default_bucket_on_create_object" ]; then
     parameter_overrides="DefaultBucketOnCreateObjectFunctionVersion=$latest_default_bucket_on_create_object"
   fi
 
-  if [ '' == "$(aws s3api head-bucket --bucket 458362456643-abr-lambda-functions --profile personal --region=us-east-1 2>&1 >/dev/null)" ]; then
+  if [ '' == "$(aws s3api head-bucket --bucket 458362456643-abr-lambda-functions --profile personal 2>&1 >/dev/null)" ]; then
     upload_lambda_functions
     deploy_stack "$parameter_overrides"
   else

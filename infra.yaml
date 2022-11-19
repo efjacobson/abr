@@ -1,13 +1,13 @@
 AWSTemplateFormatVersion: 2010-09-09
-Transform: AWS::Serverless-2016-10-31
+
 
 Description: an aerosol consisting of a visible mass of miniature liquid droplets, frozen crystals, or other particles suspended in the atmosphere of a planetary body or similar space.
+
 
 Parameters:
   DefaultBucketOnCreateObjectFunctionArn:
     Default: ''
     Type: String
-    # AllowedPattern: '^(arn:aws:lambda:us-east-1:458362456643:function:abr-DefaultBucketOnCreateObjectFunction)?$'
     AllowedValues:
       - ''
       - arn:aws:lambda:us-east-1:458362456643:function:abr-DefaultBucketOnCreateObjectFunction
@@ -16,8 +16,10 @@ Parameters:
     Type: String
     AllowedPattern: '^v\d\.\d\.\d'
 
+
 Conditions:
   DefaultBucketOnCreateObjectFunctionDoesNotExist: !Equals [!Ref 'DefaultBucketOnCreateObjectFunctionArn', '']
+
 
 Resources:
   DefaultBucket:
@@ -99,7 +101,7 @@ Resources:
         Enabled: true
         DefaultCacheBehavior:
           TargetOriginId: !Ref DefaultBucket
-          CachePolicyId: "658327ea-f89d-4fab-a63d-7e88639e58f6" # CachingOptimized: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-cache-policies.html
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # CachingOptimized: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-cache-policies.html
           ViewerProtocolPolicy: redirect-to-https
         Origins:
           - Id: !Ref DefaultBucket
@@ -125,8 +127,6 @@ Resources:
   DefaultBucketOnCreateObjectFunctionRole:
     Type: AWS::IAM::Role
     Properties:
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -161,7 +161,6 @@ Resources:
       FunctionName: !Sub "${AWS::StackName}-DefaultBucketOnCreateObjectFunction"
       Code:
         S3Bucket: !Ref LambdaFunctionBucket
-        # S3Key: !Sub "default-bucket-on-create-object/${Version}/index.js.zip"
         S3Key: !Sub
           - "default-bucket-on-create-object/${Version}/index.js.zip"
           - Version: !Ref DefaultBucketOnCreateObjectFunctionVersion

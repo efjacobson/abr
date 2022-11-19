@@ -1,15 +1,16 @@
 #! /bin/bash
 
-here="$(dirname "$(realpath "$0")")"
 bucket=default
+default_aws_arguments=
 dry_run=true
+here="$(dirname "$(realpath "$0")")"
+stack_name=
 
 display_help() {
   echo "
 Available options:
   --dry-run     Deploy as a dry run, aka the --dryrun flag
   --hot         Equivalent to --dry-run=false
-  --bucket      The bucket to upload to
   --help        This message
 "
 }
@@ -24,9 +25,6 @@ parse_arguments() {
       ;;
     --hot)
       dry_run=false
-      ;;
-    --bucket=*)
-      bucket="${opt#*=}"
       ;;
     --help)
       display_help
@@ -46,43 +44,20 @@ main() {
     exit
   fi
 
-  if [ '' == "$src" ]; then
-    echo 'a path to the src is required'
-    exit
-  fi
-
-  if [ ! -f "$src" ]; then
-    echo 'src is not a file'
-    exit
-  fi
-
-  if [ 'default' != "$bucket" ]; then
-    echo 'non-default uploads are not currently supported'
-    exit
-  fi
-
   # shellcheck source=/dev/null
   source "$here/shared.bash"
 
-  bucket_name=$(get_bucket_name 'Default')
+  local buckets && buckets=$(eval "aws cloudformation list-stack-resources --stack-name $stack_name $default_aws_arguments" | jq -r '.StackResourceSummaries[] | select(.ResourceType == "AWS::S3::Bucket") | .PhysicalResourceId')
 
-  if [ 'null' == "$bucket_name" ]; then
-    echo 'unable to determine bucket name'
-    exit
-  fi
-
-  dest="s3://$bucket_name"
-  cmd="aws s3 cp $src $dest/$src --profile personal"
-
-  if $dry_run; then
-    cmd+=' --dryrun'
-  fi
-
-  eval "$cmd"
+  local rm_command
+  for bucket in $buckets; do
+    rm_command="aws s3 rm s3://$bucket --recursive --profile personal"
+    if $dry_run; then
+      rm_command+=' --dryrun'
+    fi
+    eval "$rm_command"
+  done
 }
 
-src="$1"
-shift
 parse_arguments "$@"
-
 main
