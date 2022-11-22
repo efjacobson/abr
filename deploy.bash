@@ -1,10 +1,8 @@
 #! /bin/bash
 
 default_aws_arguments=
-deploy_template=$(mktemp)
 dry_run=true
 here="$(dirname "$(realpath "$0")")"
-region=
 stack_name=
 template="$here/infra.yaml"
 
@@ -39,13 +37,15 @@ for opt in "$@"; do
 done
 
 create_deploy_template() {
-  local AWSS3Bucket_output_GetAtt_fields=('Arn' 'DomainName' 'DualStackDomainName' 'RegionalDomainName' 'WebsiteURL')
-  local AWSCloudFrontDistribution_output_GetAtt_fields=('DomainName' 'Id')
   local AWSCloudFrontCloudFrontOriginAccessIdentity_output_GetAtt_fields=('Id' 'S3CanonicalUserId')
-  local AWSLogsLogGroup_output_GetAtt_fields=('Arn')
-  local AWSServerlessFunction_output_GetAtt_fields=('Arn')
-  local AWSLambdaFunction_output_GetAtt_fields=('Arn')
+  local AWSCloudFrontDistribution_output_GetAtt_fields=('DomainName' 'Id')
   local AWSIAMRole_output_GetAtt_fields=('Arn' 'RoleId')
+  local AWSLambdaFunction_output_GetAtt_fields=('Arn')
+  local AWSLambdaVersion_output_GetAtt_fields=('Version')
+  local AWSLogsLogGroup_output_GetAtt_fields=('Arn')
+  local AWSS3Bucket_output_GetAtt_fields=('Arn' 'DomainName' 'DualStackDomainName' 'RegionalDomainName' 'WebsiteURL')
+  local AWSServerlessFunction_output_GetAtt_fields=('Arn')
+  local AWSCloudFrontOriginAccessControl_output_GetAtt_fields=('Id')
 
   local temp_file_0 && temp_file_0="$(mktemp)"
   echo '{}' >"$temp_file_0"
@@ -73,17 +73,19 @@ create_deploy_template() {
   done
   local final_outputs && final_outputs=$(cat "$temp_file_0" | yq -y | sed -E 's/(Value: '\'')/Value: /g' | sed -E 's/^(.+)Value(.+)('\'')$/\1Value\2/g')
   echo "$final_outputs" >"$temp_file_0"
+  local deploy_template && deploy_template=$(mktemp)
   cp "$template" "$deploy_template"
   echo "" >>"$deploy_template"
   local temp_file_0 && temp_file_1="$(mktemp)"
   cat "$deploy_template" "$temp_file_0" >"$temp_file_1"
   cp "$temp_file_1" "$deploy_template"
   rm "$temp_file_1" "$temp_file_0"
+  echo "$deploy_template"
 }
 
 deploy_stack() {
   local parameter_overrides="$1"
-  create_deploy_template
+  local deploy_template && deploy_template=$(create_deploy_template)
 
   parameter_overrides+=" DefaultBucketOnCreateObjectFunctionArn=$(get_function_arn 'DefaultBucketOnCreateObjectFunction')"
   parameter_overrides="--parameter-overrides $parameter_overrides"
@@ -106,9 +108,10 @@ deploy_stack() {
   if $dry_run; then
     label="[dry run] $label"
   fi
-  echo "$deploy_output" | bat --file-name="$label" --pager=none
+  echo "$deploy_output"
+
   local ultimate_line && ultimate_line=$(echo "$deploy_output" | tail -n1)
-  regex='^aws cloudformation describe-change-set'
+  local regex='^aws cloudformation describe-change-set'
   if [[ ! "$ultimate_line" =~ $regex ]]; then
     return
   fi
@@ -120,7 +123,7 @@ deploy_stack() {
     if $dry_run; then
       label="[dry run] $label"
     fi
-    echo "$describe_output" | bat --file-name="$label" --pager=none --language=json
+    echo "$describe_output"
     return
   fi
 
@@ -140,6 +143,43 @@ upload_lambda_functions() {
   rm -rf "$here/lambda-functions/latest"
   local tempdir && tempdir="$(mktemp -d)"
   local tempvar
+  # while IFS= read -r filepath; do
+  #   # echo "$filepath"
+  #   tempvar=$(dirname "$(realpath "$filepath")")
+  #   version=${tempvar##*/}
+  #   tempvar=$(dirname "$(dirname "$(realpath "$filepath")")")
+  #   function_name=${tempvar##*/}
+  #   dir="$tempdir/$function_name/$version"
+  #   if [ ! -d "$dir" ]; then
+  #     mkdir -p "$dir"
+  #   fi
+  #   cp "$filepath" "$dir/index.js"
+  #   zip -r -j -X -q "$dir/index.js.zip" "$dir"
+  #   rm "$dir/index.js"
+  # done < <(find "$here/lambda-functions/." -name '*.js')
+
+  # local function_name
+  # for function in "$tempdir"/*; do
+  #   function_name="${function##*/}"
+
+  #   if [ -d "$function/latest" ]; then
+  #     rm -rf "$function/latest"
+  #   fi
+  #   mkdir "$function/latest"
+  #   cp -r "$function/$(get_latest_version "$function_name")/index.js.zip" "$function/latest"
+
+  #   if [ -d "$here/lambda-functions/$function_name/latest" ]; then
+  #     rm -rf "$here/lambda-functions/$function_name/latest"
+  #   fi
+
+  #   unzip "$function/latest/index.js.zip" -d "$here/lambda-functions/$function_name/latest" >>/dev/null
+  # done
+
+  # for function in "$tempdir"/*; do
+  #   echo "$function"
+  # done
+
+  tempdir="$(mktemp -d)"
   while IFS= read -r filepath; do
     tempvar=$(dirname "$(realpath "$filepath")")
     version=${tempvar##*/}
@@ -150,37 +190,56 @@ upload_lambda_functions() {
       mkdir -p "$dir"
     fi
     cp "$filepath" "$dir/index.js"
-    zip -r -j -X -q "$dir/index.js.zip" "$dir"
-    rm "$dir/index.js"
+    zip -j -X -q "$dir/index.js.zip" "$dir/index.js"
+    aws s3api put-object \
+      --bucket "$(get_bucket_name 'LambdaFunction')" \
+      --key "$function_name/$version/index.js.zip" \
+      --body "$dir/index.js.zip" \
+      --checksum-algorithm SHA256 \
+      --profile personal >>/dev/null
+    # rm -f "$filepath.zip"
   done < <(find "$here/lambda-functions/." -name '*.js')
 
   local function_name
   for function in "$tempdir"/*; do
     function_name="${function##*/}"
-    cp -r "$function/$(get_latest_version "$function_name")/index.js.zip" "$function/latest"
-    rm -rf "$here/lambda-functions/$function_name/latest"
-    unzip "$function/latest/index.js.zip" -d "$here/lambda-functions/$function_name/latest" >>/dev/null
+
+    # if [ -d "$function/latest" ]; then
+    #   rm -rf "$function/latest"
+    # fi
+    # mkdir "$function/latest"
+
+    if [ -d "$here/lambda-functions/$function_name/latest" ]; then
+      rm -rf "$here/lambda-functions/$function_name/latest"
+      mkdir "$here/lambda-functions/$function_name/latest"
+    fi
+
+    unzip "$function/$(get_latest_version "$function_name")/index.js.zip" -d "$here/lambda-functions/$function_name/latest" >>/dev/null
+
+    # unzip "$function/latest/index.js.zip" -d "$here/lambda-functions/$function_name/latest" >>/dev/null
   done
 
-  local sync_command && sync_command="\
-  aws s3 sync $tempdir s3://$(get_bucket_name 'LambdaFunction') \
-    --delete \
-    --size-only \
-    --profile personal"
-
-  if $dry_run; then
-    sync_command+=' --dryrun'
-  fi
-
-  echo 'syncing functions...'
-  local sync_output && sync_output=$(eval "$sync_command")
-  local label="$sync_command"
-  if $dry_run; then
-    label="[dry run] $label"
-  fi
-  echo "$sync_output" | bat --file-name="$label" --pager=none
-
   rm -rf "$tempdir"
+
+  # local sync_command && sync_command="\
+  # aws s3 sync $tempdir s3://$(get_bucket_name 'LambdaFunction') \
+  #   --delete \
+  #   --size-only \
+  #   --profile personal"
+
+  # if $dry_run; then
+  #   sync_command+=' --dryrun'
+  # fi
+
+  # echo 'syncing functions...'
+  # local sync_output && sync_output=$(eval "$sync_command")
+  # local label="$sync_command"
+  # if $dry_run; then
+  #   label="[dry run] $label"
+  # fi
+  # echo "$sync_output"
+
+  # rm -rf "$tempdir"
 }
 
 main() {
@@ -197,10 +256,56 @@ main() {
   # shellcheck source=/dev/null
   source "$here/shared.bash"
 
+  # aws lambda get-function --function-name abr-DefaultBucketOnOriginRequestFunction --region us-east-1 --profile personal --query="Configuration.CodeSha256" --output=text
+
+  local drift_detection_status
+  if [ ! -f "$here/.drift" ]; then
+    eval "aws cloudformation detect-stack-drift \
+      --stack-name $stack_name \
+      --query=\"StackDriftDetectionId\" \
+      --output=text \
+      $default_aws_arguments" >"$here/.drift"
+    sleep 3
+    main && exit
+  else
+    drift_detection_status=$(eval "aws cloudformation describe-stack-drift-detection-status \
+      --stack-drift-detection-id $(cat "$here/.drift") \
+      $default_aws_arguments")
+
+    if [ 'DETECTION_COMPLETE' != "$(echo "$drift_detection_status" | jq -r '.DetectionStatus')" ]; then
+      echo 'still detecting drift, sleeping for 3 seconds...'
+      sleep 3
+      main && exit
+    fi
+    drift_detection_status="$(echo "$drift_detection_status" | jq -r '.StackDriftStatus')"
+    if [ 'IN_SYNC' == "$drift_detection_status" ]; then
+      echo 'stack is in sync...'
+      rm -f "$here/.drift"
+    else
+      while true; do
+        read -r -p "stack is not in sync, has status [$drift_detection_status]. continue deploying? (y/N): " answer
+        case "$answer" in
+        Y | y)
+          rm -f "$here/.drift"
+          break
+          ;;
+        *)
+          exit
+          ;;
+        esac
+      done
+    fi
+  fi
+
+  local parameter_overrides=''
   latest_default_bucket_on_create_object=$(get_latest_version default-bucket-on-create-object)
-  local parameter_overrides
   if [ '' != "$latest_default_bucket_on_create_object" ]; then
-    parameter_overrides="DefaultBucketOnCreateObjectFunctionVersion=$latest_default_bucket_on_create_object"
+    parameter_overrides+=" DefaultBucketOnCreateObjectFunctionSemanticVersion=$latest_default_bucket_on_create_object"
+  fi
+
+  latest_default_bucket_on_origin_request=$(get_latest_version default-bucket-on-origin-request)
+  if [ '' != "$latest_default_bucket_on_origin_request" ]; then
+    parameter_overrides+=" DefaultBucketOnOriginRequestFunctionSemanticVersion=$latest_default_bucket_on_origin_request"
   fi
 
   if [ '' == "$(aws s3api head-bucket --bucket 458362456643-abr-lambda-functions --profile personal 2>&1 >/dev/null)" ]; then
