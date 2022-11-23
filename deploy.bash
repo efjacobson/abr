@@ -37,6 +37,8 @@ for opt in "$@"; do
 done
 
 create_deploy_template() {
+  local optional_output_regex='^OutgoingDefaultBucketOnOriginRequestFunction(Version)?$'
+
   local AWSCloudFrontCloudFrontOriginAccessIdentity_output_GetAtt_fields=('Id' 'S3CanonicalUserId')
   local AWSCloudFrontDistribution_output_GetAtt_fields=('DomainName' 'Id')
   local AWSIAMRole_output_GetAtt_fields=('Arn' 'RoleId')
@@ -51,16 +53,25 @@ create_deploy_template() {
   echo '{}' >"$temp_file_0"
   local outputs && outputs=$(echo '{}' | jq)
   yq '.Resources | keys[]' "$template" | while read -r resource; do
-    local raw_resource && raw_resource=$(echo "$resource" | sed 's/"//g')
-    local Ref_filter=". + {\"${raw_resource}Ref\": {\"Value\": \"!Ref $raw_resource\"}}"
+    local raw_resource && raw_resource=$(echo "$resource" | tr -d '"')
+    local Ref_filter=". + {\"${raw_resource}Ref\": {\"Value\": \"!Ref $raw_resource\""
+    if [[ "$raw_resource" =~ $optional_output_regex ]]; then
+      Ref_filter+=",\"Condition\":\"${raw_resource/Version/}Exists\""
+    fi
+    Ref_filter+='}}'
     outputs=$(echo "$outputs" | jq "$Ref_filter")
+
     local filter=".Resources.$raw_resource.Type"
     local type && type=$(yq -r "$filter" "$template")
     local config=${type//:/}
     local output_fields="$config"_output_GetAtt_fields[@]
     local count=0
     for GetAtt_field in ${!output_fields}; do
-      GetAtt_filter=". + {\"$raw_resource$GetAtt_field\": {\"Value\": \"!GetAtt $raw_resource.$GetAtt_field\"}}"
+      GetAtt_filter=". + {\"$raw_resource$GetAtt_field\": {\"Value\": \"!GetAtt $raw_resource.$GetAtt_field\""
+      if [[ "$raw_resource" =~ $optional_output_regex ]]; then
+        GetAtt_filter+=",\"Condition\":\"${raw_resource/Version/}Exists\""
+      fi
+      GetAtt_filter+='}}'
       outputs=$(echo "$outputs" | jq "$GetAtt_filter")
       count=$((count + 1))
     done
@@ -84,17 +95,17 @@ create_deploy_template() {
 }
 
 deploy_stack() {
-  local parameter_overrides="$1"
-  local deploy_template && deploy_template=$(create_deploy_template)
+  local parameter_overrides=("$@")
+  local deploy_template && deploy_template=$(create_deploy_template "${parameter_overrides[@]}")
 
-  parameter_overrides+=" DefaultBucketOnCreateObjectFunctionArn=$(get_function_arn 'DefaultBucketOnCreateObjectFunction')"
-  parameter_overrides="--parameter-overrides $parameter_overrides"
+  parameter_overrides+=("DefaultBucketOnCreateObjectFunctionArn=$(get_function_arn 'DefaultBucketOnCreateObjectFunction')")
+  parameter_overrides_option="--parameter-overrides ${parameter_overrides[*]}"
 
   local deploy_command="aws cloudformation deploy \
     --template-file $deploy_template  \
     --stack-name $stack_name \
     --capabilities CAPABILITY_IAM \
-    $parameter_overrides \
+    $parameter_overrides_option \
     $default_aws_arguments"
 
   if $dry_run; then
@@ -136,110 +147,47 @@ get_latest_version() {
   for version in "$here/lambda-functions/$function"/*; do
     latest=${version##*/}
   done
+  if [ '*' == "$latest" ]; then
+    echo "no versions for function: $function. exiting early..."
+    exit
+  fi
   echo "$latest"
 }
 
 upload_lambda_functions() {
-  rm -rf "$here/lambda-functions/latest"
-  local tempdir && tempdir="$(mktemp -d)"
-  local tempvar
-  # while IFS= read -r filepath; do
-  #   # echo "$filepath"
-  #   tempvar=$(dirname "$(realpath "$filepath")")
-  #   version=${tempvar##*/}
-  #   tempvar=$(dirname "$(dirname "$(realpath "$filepath")")")
-  #   function_name=${tempvar##*/}
-  #   dir="$tempdir/$function_name/$version"
-  #   if [ ! -d "$dir" ]; then
-  #     mkdir -p "$dir"
-  #   fi
-  #   cp "$filepath" "$dir/index.js"
-  #   zip -r -j -X -q "$dir/index.js.zip" "$dir"
-  #   rm "$dir/index.js"
-  # done < <(find "$here/lambda-functions/." -name '*.js')
-
-  # local function_name
-  # for function in "$tempdir"/*; do
-  #   function_name="${function##*/}"
-
-  #   if [ -d "$function/latest" ]; then
-  #     rm -rf "$function/latest"
-  #   fi
-  #   mkdir "$function/latest"
-  #   cp -r "$function/$(get_latest_version "$function_name")/index.js.zip" "$function/latest"
-
-  #   if [ -d "$here/lambda-functions/$function_name/latest" ]; then
-  #     rm -rf "$here/lambda-functions/$function_name/latest"
-  #   fi
-
-  #   unzip "$function/latest/index.js.zip" -d "$here/lambda-functions/$function_name/latest" >>/dev/null
-  # done
-
-  # for function in "$tempdir"/*; do
-  #   echo "$function"
-  # done
-
-  tempdir="$(mktemp -d)"
-  while IFS= read -r filepath; do
-    tempvar=$(dirname "$(realpath "$filepath")")
-    version=${tempvar##*/}
-    tempvar=$(dirname "$(dirname "$(realpath "$filepath")")")
-    function_name=${tempvar##*/}
-    dir="$tempdir/$function_name/$version"
-    if [ ! -d "$dir" ]; then
-      mkdir -p "$dir"
+  for function in "$here/lambda-functions"/*; do
+    if [ -d "$function/latest" ]; then
+      rm -rf "$function/latest"
     fi
-    cp "$filepath" "$dir/index.js"
-    zip -j -X -q "$dir/index.js.zip" "$dir/index.js"
-    aws s3api put-object \
-      --bucket "$(get_bucket_name 'LambdaFunction')" \
-      --key "$function_name/$version/index.js.zip" \
-      --body "$dir/index.js.zip" \
-      --checksum-algorithm SHA256 \
-      --profile personal >>/dev/null
-    # rm -f "$filepath.zip"
-  done < <(find "$here/lambda-functions/." -name '*.js')
-
-  local function_name
-  for function in "$tempdir"/*; do
-    function_name="${function##*/}"
-
-    # if [ -d "$function/latest" ]; then
-    #   rm -rf "$function/latest"
-    # fi
-    # mkdir "$function/latest"
-
-    if [ -d "$here/lambda-functions/$function_name/latest" ]; then
-      rm -rf "$here/lambda-functions/$function_name/latest"
-      mkdir "$here/lambda-functions/$function_name/latest"
-    fi
-
-    unzip "$function/$(get_latest_version "$function_name")/index.js.zip" -d "$here/lambda-functions/$function_name/latest" >>/dev/null
-
-    # unzip "$function/latest/index.js.zip" -d "$here/lambda-functions/$function_name/latest" >>/dev/null
   done
 
-  rm -rf "$tempdir"
+  bucket="$(get_bucket_name 'LambdaFunction')"
+  while IFS= read -r filepath; do
+    base_name="$(basename "$filepath")"
+    dir_name="$(dirname "$(realpath "$filepath")")"
+    dir_names_dir_name=$(dirname "$dir_name")
 
-  # local sync_command && sync_command="\
-  # aws s3 sync $tempdir s3://$(get_bucket_name 'LambdaFunction') \
-  #   --delete \
-  #   --size-only \
-  #   --profile personal"
+    function_name=${dir_names_dir_name##*/}
+    version=${dir_name##*/}
+    key="$function_name/$version/$base_name.zip"
 
-  # if $dry_run; then
-  #   sync_command+=' --dryrun'
-  # fi
+    zip_path="$filepath.zip"
+    zip -j -X -q "$zip_path" "$filepath"
+    checksum="$(openssl dgst -sha256 -binary "$zip_path" | openssl enc -base64)"
 
-  # echo 'syncing functions...'
-  # local sync_output && sync_output=$(eval "$sync_command")
-  # local label="$sync_command"
-  # if $dry_run; then
-  #   label="[dry run] $label"
-  # fi
-  # echo "$sync_output"
+    aws s3api put-object \
+      --bucket "$bucket" \
+      --key "$key" \
+      --body "$zip_path" \
+      --checksum-sha256 "$checksum" \
+      --profile personal >>/dev/null
+    echo "uploaded $key to s3://$bucket/$key with sha256 checksum $checksum"
+    rm -f "$zip_path"
+  done < <(find "$here/lambda-functions/." -name '*.js')
 
-  # rm -rf "$tempdir"
+  for function in "$here/lambda-functions"/*; do
+    cp -r "$function/$(get_latest_version "${function##*/}")" "$function/latest"
+  done
 }
 
 main() {
@@ -255,8 +203,6 @@ main() {
 
   # shellcheck source=/dev/null
   source "$here/shared.bash"
-
-  # aws lambda get-function --function-name abr-DefaultBucketOnOriginRequestFunction --region us-east-1 --profile personal --query="Configuration.CodeSha256" --output=text
 
   local drift_detection_status
   if [ ! -f "$here/.drift" ]; then
@@ -297,22 +243,49 @@ main() {
     fi
   fi
 
-  local parameter_overrides=''
+  local parameter_overrides=()
   latest_default_bucket_on_create_object=$(get_latest_version default-bucket-on-create-object)
   if [ '' != "$latest_default_bucket_on_create_object" ]; then
-    parameter_overrides+=" DefaultBucketOnCreateObjectFunctionSemanticVersion=$latest_default_bucket_on_create_object"
+    parameter_overrides+=("DefaultBucketOnCreateObjectFunctionSemanticVersion=$latest_default_bucket_on_create_object")
   fi
 
   latest_default_bucket_on_origin_request=$(get_latest_version default-bucket-on-origin-request)
   if [ '' != "$latest_default_bucket_on_origin_request" ]; then
-    parameter_overrides+=" DefaultBucketOnOriginRequestFunctionSemanticVersion=$latest_default_bucket_on_origin_request"
+    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionSemanticVersion=$latest_default_bucket_on_origin_request")
+    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFriendlySemanticVersion=${latest_default_bucket_on_origin_request//./-}")
   fi
+
+  fn_name="$stack_name-DefaultBucketOnOriginRequestFunction_${latest_default_bucket_on_origin_request//./-}"
+  current_or_incoming_default_bucket_on_origin_request_function_name="$fn_name"
+  current_or_incoming_default_bucket_on_origin_request_function_semantic_version="$latest_default_bucket_on_origin_request"
+
+  local distribution_id && distribution_id=$(get_distribution_id 'Primary')
+  primary_distribution_lambda_function_associations=$(aws cloudfront get-distribution-config --id "$distribution_id" --profile personal --query="DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations")
+  quantity=$(echo "$primary_distribution_lambda_function_associations" | jq '.Quantity')
+  if [ '0' != "$quantity" ]; then
+    origin_request_lambda_association=$(echo "$primary_distribution_lambda_function_associations" | jq '.Items[] | select(.EventType=="origin-request")')
+    if [ '' != "$origin_request_lambda_association" ]; then
+      origin_request_lambda_function_arn=$(echo "$origin_request_lambda_association" | jq -r '.LambdaFunctionARN')
+      prefix='arn:aws:lambda:us-east-1:458362456643:function:'
+      origin_request_lambda_function_name="${origin_request_lambda_function_arn/$prefix/}"
+      origin_request_lambda_function_name="$(echo "$origin_request_lambda_function_name" | sed -E 's/:[0-9]+$//')"
+      if [ "$origin_request_lambda_function_name" != "$fn_name" ]; then
+        echo "oh fuck look at that"
+        exit
+        parameter_overrides+=("OutgoingDefaultBucketOnOriginRequestFunctionName=$origin_request_lambda_function_name")
+        parameter_overrides+=("OutgoingDefaultBucketOnOriginRequestFunctionSemanticVersion=")
+      fi
+    fi
+  fi
+
+  parameter_overrides+=("CurrentOrIncomingDefaultBucketOnOriginRequestFunctionName=$current_or_incoming_default_bucket_on_origin_request_function_name")
+  parameter_overrides+=("CurrentOrIncomingDefaultBucketOnOriginRequestFunctionSemanticVersion=$current_or_incoming_default_bucket_on_origin_request_function_semantic_version")
 
   if [ '' == "$(aws s3api head-bucket --bucket 458362456643-abr-lambda-functions --profile personal 2>&1 >/dev/null)" ]; then
     upload_lambda_functions
-    deploy_stack "$parameter_overrides"
+    deploy_stack "${parameter_overrides[@]}"
   else
-    deploy_stack "$parameter_overrides"
+    deploy_stack "${parameter_overrides[@]}"
     upload_lambda_functions
   fi
 }

@@ -27,18 +27,24 @@ init_config() {
 }
 
 get_bucket_name() {
-  local bucket_type="$1"
+  local name="$1"
   init_config
-  echo "$json_config" | jq -r ".${bucket_type}BucketRef"
+  echo "$json_config" | jq -r ".${name}BucketRef"
+}
+
+get_distribution_id() {
+  local name="$1"
+  init_config
+  echo "$json_config" | jq -r ".${name}DistributionId"
 }
 
 get_function_arn() {
-  local function_name="$1"
+  local name="$1"
   init_config
-  local function_arn && function_arn=$(echo "$json_config" | jq -r ".${function_name}Arn")
-  if [ 'null' == "$function_arn" ]; then
+  local arn && arn=$(echo "$json_config" | jq -r ".${name}Arn")
+  if [ 'null' == "$arn" ]; then
     echo ''
   else
-    echo "$function_arn"
+    echo "$arn"
   fi
 }
