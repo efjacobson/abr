@@ -37,7 +37,7 @@ for opt in "$@"; do
 done
 
 create_deploy_template() {
-  local optional_output_regex='^OutgoingDefaultBucketOnOriginRequestFunction(Version)?$'
+  local optional_output_regex='^CurrentDefaultBucketOnOriginRequestFunction(Version)?$'
 
   local AWSCloudFrontCloudFrontOriginAccessIdentity_output_GetAtt_fields=('Id' 'S3CanonicalUserId')
   local AWSCloudFrontDistribution_output_GetAtt_fields=('DomainName' 'Id')
@@ -56,7 +56,7 @@ create_deploy_template() {
     local raw_resource && raw_resource=$(echo "$resource" | tr -d '"')
     local Ref_filter=". + {\"${raw_resource}Ref\": {\"Value\": \"!Ref $raw_resource\""
     if [[ "$raw_resource" =~ $optional_output_regex ]]; then
-      Ref_filter+=",\"Condition\":\"${raw_resource/Version/}Exists\""
+      Ref_filter+=",\"Condition\":\"CurrentAndIncomingAreDifferent\""
     fi
     Ref_filter+='}}'
     outputs=$(echo "$outputs" | jq "$Ref_filter")
@@ -69,7 +69,7 @@ create_deploy_template() {
     for GetAtt_field in ${!output_fields}; do
       GetAtt_filter=". + {\"$raw_resource$GetAtt_field\": {\"Value\": \"!GetAtt $raw_resource.$GetAtt_field\""
       if [[ "$raw_resource" =~ $optional_output_regex ]]; then
-        GetAtt_filter+=",\"Condition\":\"${raw_resource/Version/}Exists\""
+        GetAtt_filter+=",\"Condition\":\"CurrentAndIncomingAreDifferent\""
       fi
       GetAtt_filter+='}}'
       outputs=$(echo "$outputs" | jq "$GetAtt_filter")
@@ -256,8 +256,8 @@ main() {
   fi
 
   fn_name="$stack_name-DefaultBucketOnOriginRequestFunction_${latest_default_bucket_on_origin_request//./-}"
-  current_or_incoming_default_bucket_on_origin_request_function_name="$fn_name"
-  current_or_incoming_default_bucket_on_origin_request_function_semantic_version="$latest_default_bucket_on_origin_request"
+  incoming_default_bucket_on_origin_request_function_name="$fn_name"
+  incoming_default_bucket_on_origin_request_function_semantic_version="$latest_default_bucket_on_origin_request"
 
   local distribution_id && distribution_id=$(get_distribution_id 'Primary')
   primary_distribution_lambda_function_associations=$(aws cloudfront get-distribution-config --id "$distribution_id" --profile personal --query="DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations")
@@ -269,17 +269,15 @@ main() {
       prefix='arn:aws:lambda:us-east-1:458362456643:function:'
       origin_request_lambda_function_name="${origin_request_lambda_function_arn/$prefix/}"
       origin_request_lambda_function_name="$(echo "$origin_request_lambda_function_name" | sed -E 's/:[0-9]+$//')"
-      if [ "$origin_request_lambda_function_name" != "$fn_name" ]; then
-        echo "oh fuck look at that"
-        exit
-        parameter_overrides+=("OutgoingDefaultBucketOnOriginRequestFunctionName=$origin_request_lambda_function_name")
-        parameter_overrides+=("OutgoingDefaultBucketOnOriginRequestFunctionSemanticVersion=")
-      fi
+      parameter_overrides+=("CurrentDefaultBucketOnOriginRequestFunctionName=$origin_request_lambda_function_name")
+      version="${origin_request_lambda_function_arn##*_}"
+      version=$(echo "$version" | sed -E 's/:[0-9]+$//')
+      parameter_overrides+=("CurrentDefaultBucketOnOriginRequestFunctionSemanticVersion=${version//-/.}")
     fi
   fi
 
-  parameter_overrides+=("CurrentOrIncomingDefaultBucketOnOriginRequestFunctionName=$current_or_incoming_default_bucket_on_origin_request_function_name")
-  parameter_overrides+=("CurrentOrIncomingDefaultBucketOnOriginRequestFunctionSemanticVersion=$current_or_incoming_default_bucket_on_origin_request_function_semantic_version")
+  parameter_overrides+=("IncomingDefaultBucketOnOriginRequestFunctionName=$incoming_default_bucket_on_origin_request_function_name")
+  parameter_overrides+=("IncomingDefaultBucketOnOriginRequestFunctionSemanticVersion=$incoming_default_bucket_on_origin_request_function_semantic_version")
 
   if [ '' == "$(aws s3api head-bucket --bucket 458362456643-abr-lambda-functions --profile personal 2>&1 >/dev/null)" ]; then
     upload_lambda_functions

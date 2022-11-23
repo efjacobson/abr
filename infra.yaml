@@ -5,53 +5,45 @@ Description: an aerosol consisting of a visible mass of miniature liquid droplet
 
 
 Parameters:
-  DefaultBucketOnCreateObjectFunctionArn:
-    Default: ''
-    Type: String
-    AllowedValues:
-      - ''
-      - arn:aws:lambda:us-east-1:458362456643:function:abr-DefaultBucketOnCreateObjectFunction
-  
-  # DefaultBucketOnCreateObjectFunctionSemanticVersion:
-  #   Type: String
-  #   AllowedPattern: '^v\d+\.\d+\.\d+$'
-
-  CurrentOrIncomingDefaultBucketOnOriginRequestFunctionName:
+  IncomingDefaultBucketOnOriginRequestFunctionName:
     Type: String
     AllowedPattern: '^abr-DefaultBucketOnOriginRequestFunction_v\d+-\d+-\d+$'
 
-  CurrentOrIncomingDefaultBucketOnOriginRequestFunctionSemanticVersion:
+  IncomingDefaultBucketOnOriginRequestFunctionSemanticVersion:
     Type: String
     AllowedPattern: '^v\d+\.\d+\.\d+$'
 
-  OutgoingDefaultBucketOnOriginRequestFunctionName:
+  CurrentDefaultBucketOnOriginRequestFunctionName:
     Default: ''
     Type: String
     AllowedPattern: '^(abr-DefaultBucketOnOriginRequestFunction_v\d+-\d+-\d+)?$'
 
-  OutgoingDefaultBucketOnOriginRequestFunctionSemanticVersion:
+  # DefaultBucketOnCreateObjectFunctionArn:
+  #   Default: ''
+  #   Type: String
+  #   AllowedValues:
+  #     - ''
+  #     - arn:aws:lambda:us-east-1:458362456643:function:abr-DefaultBucketOnCreateObjectFunction
+
+  CurrentDefaultBucketOnOriginRequestFunctionSemanticVersion:
     Default: ''
     Type: String
     AllowedPattern: '^(v\d+\.\d+\.\d+)?$'
 
-  # DefaultBucketOnOriginRequestFunctionSemanticVersion:
-  #   Type: String
-  #   AllowedPattern: '^v\d+\.\d+\.\d+$'
-
-  # DefaultBucketOnOriginRequestFunctionFriendlySemanticVersion:
-  #   Type: String
-  #   AllowedPattern: '^v\d+-\d+-\d+$'
+########################################################################
 
 Conditions:
-  DefaultBucketOnCreateObjectFunctionDoesNotExist: !Equals
-    - ''
-    - !Ref 'DefaultBucketOnCreateObjectFunctionArn'
+  CurrentAndIncomingAreDifferent: !And
+    - !Not
+      - !Equals
+        - ''
+        - !Ref 'CurrentDefaultBucketOnOriginRequestFunctionName'
+    - !Not
+      - !Equals
+        - !Ref 'IncomingDefaultBucketOnOriginRequestFunctionName'
+        - !Ref 'CurrentDefaultBucketOnOriginRequestFunctionName'
 
-  OutgoingDefaultBucketOnOriginRequestFunctionExists: !Not
-    - !Equals
-      - ''
-      - !Ref 'OutgoingDefaultBucketOnOriginRequestFunctionName'
-
+########################################################################
 
 Resources:
   LambdaFunctionBucket:
@@ -126,7 +118,7 @@ Resources:
               - "arn:${AWS::Partition}:s3:::${Bucket}/*"
               - Bucket: !Ref "DefaultBucket"
   
-  ########################################################################
+  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
   PrimaryDistribution:
     Type: AWS::CloudFront::Distribution
@@ -143,15 +135,16 @@ Resources:
               IncludeBody: true
               LambdaFunctionARN: !Sub
                   - "${FunctionArn}:${Version}"
-                  - FunctionArn: !GetAtt CurrentOrIncomingDefaultBucketOnOriginRequestFunction.Arn
-                    Version: !GetAtt CurrentOrIncomingDefaultBucketOnOriginRequestFunctionVersion.Version
+                  - FunctionArn: !GetAtt IncomingDefaultBucketOnOriginRequestFunction.Arn
+                    Version: !GetAtt IncomingDefaultBucketOnOriginRequestFunctionVersion.Version
         Origins:
           - Id: !Ref DefaultBucket
             OriginAccessControlId: !GetAtt DefaultBucketCloudFrontOriginAccessControl.Id
             DomainName: !Sub
               - "${Bucket}.s3.${AWS::Region}.${AWS::URLSuffix}"
               - Bucket: !Ref DefaultBucket
-            S3OriginConfig: {}
+            S3OriginConfig:
+              OriginAccessIdentity: ''
   
   DefaultBucketCloudFrontOriginAccessControl:
     Type: AWS::CloudFront::OriginAccessControl
@@ -164,7 +157,85 @@ Resources:
           - "${DefaultBucket}-cloudfront-origin-access-control"
           - DefaultBucket: !Ref 'DefaultBucket'
 
-  ########################################################################
+  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+  IncomingDefaultBucketOnOriginRequestFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref IncomingDefaultBucketOnOriginRequestFunctionName
+      Handler: index.handler
+      Role: !GetAtt DefaultBucketOnOriginRequestFunctionRole.Arn
+      Runtime: nodejs14.x # nodejs16.x
+      Code:
+        S3Bucket: !Ref LambdaFunctionBucket
+        S3Key: !Sub
+          - "default-bucket-on-origin-request/${Version}/index.js.zip"
+          - Version: !Ref IncomingDefaultBucketOnOriginRequestFunctionSemanticVersion
+
+  IncomingDefaultBucketOnOriginRequestFunctionVersion:
+    Type: AWS::Lambda::Version
+    Properties:
+      Description: !Ref IncomingDefaultBucketOnOriginRequestFunctionSemanticVersion
+      FunctionName: !GetAtt IncomingDefaultBucketOnOriginRequestFunction.Arn
+
+  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+  CurrentDefaultBucketOnOriginRequestFunction:
+    Condition: CurrentAndIncomingAreDifferent
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref CurrentDefaultBucketOnOriginRequestFunctionName
+      Handler: index.handler
+      Role: !GetAtt DefaultBucketOnOriginRequestFunctionRole.Arn
+      Runtime: nodejs14.x # nodejs16.x
+      Code:
+        S3Bucket: !Ref LambdaFunctionBucket
+        S3Key: !Sub
+          - "default-bucket-on-origin-request/${Version}/index.js.zip"
+          - Version: !Ref CurrentDefaultBucketOnOriginRequestFunctionSemanticVersion
+
+  CurrentDefaultBucketOnOriginRequestFunctionVersion:
+    Condition: CurrentAndIncomingAreDifferent
+    Type: AWS::Lambda::Version
+    Properties:
+      Description: !Ref CurrentDefaultBucketOnOriginRequestFunctionSemanticVersion
+      FunctionName: !GetAtt CurrentDefaultBucketOnOriginRequestFunction.Arn
+
+  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+  DefaultBucketOnOriginRequestFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - edgelambda.amazonaws.com
+      Policies:
+        - PolicyName: LogGroupAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/abr-DefaultBucketOnOriginRequestFunction:*"
+                Action:
+                  - logs:CreateLogGroup
+        - PolicyName: LogStreamAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnOriginRequestFunction:*"
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+
+  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
   # DefaultBucketOnCreateObjectFunction:
   #   Type: AWS::Lambda::Function
@@ -220,113 +291,3 @@ Resources:
   #     SourceArn: !Sub
   #       - "arn:${AWS::Partition}:s3:::${Bucket}"
   #       - Bucket: !Ref "DefaultBucket"
-
-  ########################################################################
-
-  CurrentOrIncomingDefaultBucketOnOriginRequestFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Ref CurrentOrIncomingDefaultBucketOnOriginRequestFunctionName
-      Handler: index.handler
-      Role: !GetAtt DefaultBucketOnOriginRequestFunctionRole.Arn
-      Runtime: nodejs14.x # nodejs16.x
-      Code:
-        S3Bucket: !Ref LambdaFunctionBucket
-        S3Key: !Sub
-          - "default-bucket-on-origin-request/${Version}/index.js.zip"
-          - Version: !Ref CurrentOrIncomingDefaultBucketOnOriginRequestFunctionSemanticVersion
-
-  CurrentOrIncomingDefaultBucketOnOriginRequestFunctionVersion:
-    Type: AWS::Lambda::Version
-    Properties:
-      Description: !Ref CurrentOrIncomingDefaultBucketOnOriginRequestFunctionSemanticVersion
-      FunctionName: !GetAtt CurrentOrIncomingDefaultBucketOnOriginRequestFunction.Arn
-
-  OutgoingDefaultBucketOnOriginRequestFunction:
-    Condition: OutgoingDefaultBucketOnOriginRequestFunctionExists
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Ref OutgoingDefaultBucketOnOriginRequestFunctionName
-      Handler: index.handler
-      Role: !GetAtt DefaultBucketOnOriginRequestFunctionRole.Arn
-      Runtime: nodejs14.x # nodejs16.x
-      Code:
-        S3Bucket: !Ref LambdaFunctionBucket
-        S3Key: !Sub
-          - "default-bucket-on-origin-request/${Version}/index.js.zip"
-          - Version: !Ref OutgoingDefaultBucketOnOriginRequestFunctionSemanticVersion
-
-  OutgoingDefaultBucketOnOriginRequestFunctionVersion:
-    Condition: OutgoingDefaultBucketOnOriginRequestFunctionExists
-    Type: AWS::Lambda::Version
-    Properties:
-      Description: !Ref OutgoingDefaultBucketOnOriginRequestFunctionSemanticVersion
-      FunctionName: !GetAtt OutgoingDefaultBucketOnOriginRequestFunction.Arn
-
-  # DefaultBucketOnOriginRequestFunctionOnlyResourceNameDifferent:
-  #   Type: AWS::Lambda::Function
-  #   Properties:
-  #     FunctionName: !Sub "${AWS::StackName}-DefaultBucketOnOriginRequestFunction"
-  #     Handler: index.handler
-  #     Role: !GetAtt DefaultBucketOnOriginRequestFunctionRole.Arn
-  #     Runtime: nodejs14.x # nodejs16.x
-  #     Code:
-  #       S3Bucket: !Ref LambdaFunctionBucket
-  #       S3Key: !Sub
-  #         - "default-bucket-on-origin-request/${Version}/index.js.zip"
-  #         - Version: !Ref DefaultBucketOnOriginRequestFunctionSemanticVersion
-
-  # DefaultBucketOnOriginRequestFunction:
-  #   Type: AWS::Lambda::Function
-  #   # DeletionPolicy: Retain
-  #   # UpdateReplacePolicy: Retain
-  #   Properties:
-  #     Handler: index.handler
-  #     Role: !GetAtt DefaultBucketOnOriginRequestFunctionRole.Arn
-  #     Runtime: nodejs14.x # nodejs16.x
-  #     FunctionName: !Sub
-  #       - "${AWS::StackName}-DefaultBucketOnOriginRequestFunction_${Version}"
-  #       - Version: !Ref DefaultBucketOnOriginRequestFunctionFriendlySemanticVersion
-  #     Code:
-  #       S3Bucket: !Ref LambdaFunctionBucket
-  #       S3Key: !Sub
-  #         - "default-bucket-on-origin-request/${Version}/index.js.zip"
-  #         - Version: !Ref DefaultBucketOnOriginRequestFunctionSemanticVersion
-
-  # DefaultBucketOnOriginRequestFunctionVersion:
-  #   Type: AWS::Lambda::Version
-  #   Properties:
-  #     Description: !Ref DefaultBucketOnOriginRequestFunctionSemanticVersion
-  #     FunctionName: !GetAtt DefaultBucketOnOriginRequestFunction.Arn
-
-  DefaultBucketOnOriginRequestFunctionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: 2012-10-17
-        Statement:
-          - Effect: Allow
-            Action:
-              - sts:AssumeRole
-            Principal:
-              Service:
-                - lambda.amazonaws.com
-                - edgelambda.amazonaws.com
-      Policies:
-        - PolicyName: LogGroupAccess
-          PolicyDocument:
-            Version: 2012-10-17
-            Statement:
-              - Effect: Allow
-                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/abr-DefaultBucketOnOriginRequestFunction:*"
-                Action:
-                  - logs:CreateLogGroup
-        - PolicyName: LogStreamAccess
-          PolicyDocument:
-            Version: 2012-10-17
-            Statement:
-              - Effect: Allow
-                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnOriginRequestFunction:*"
-                Action:
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
