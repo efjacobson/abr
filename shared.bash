@@ -3,8 +3,9 @@
 json_config=
 
 region='us-east-1'
-stack_name=abr
-default_aws_arguments="--region $region --profile personal"
+stack_name="$1-$region"
+profile='personal'
+default_aws_arguments="--region $region --profile $profile"
 
 set_config() {
   local describe_stacks_outputs && describe_stacks_outputs=$(eval "aws cloudformation describe-stacks $default_aws_arguments \
@@ -35,7 +36,12 @@ get_bucket_name() {
 get_distribution_id() {
   local name="$1"
   init_config
-  echo "$json_config" | jq -r ".${name}DistributionId"
+  local id=$(echo "$json_config" | jq -r ".${name}DistributionId")
+  if [ 'null' == "$id" ]; then
+    echo ''
+    return
+  fi
+  echo "$id"
 }
 
 get_function_arn() {

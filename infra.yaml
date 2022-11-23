@@ -5,27 +5,32 @@ Description: an aerosol consisting of a visible mass of miniature liquid droplet
 
 
 Parameters:
-  IncomingDefaultBucketOnOriginRequestFunctionName:
+  IsCreate:
+    Default: 'false'
     Type: String
-    AllowedPattern: '^abr-DefaultBucketOnOriginRequestFunction_v\d+-\d+-\d+$'
+    AllowedValues:
+      - 'true'
+      - 'false'
 
-  IncomingDefaultBucketOnOriginRequestFunctionSemanticVersion:
+  DefaultBucketOnOriginRequestFunctionFromFileName:
     Type: String
-    AllowedPattern: '^v\d+\.\d+\.\d+$'
+    AllowedPattern: '^([A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-DefaultBucketOnOriginRequestFunction_v\d+-\d+-\d+-(file|association))?$'
 
-  CurrentDefaultBucketOnOriginRequestFunctionName:
+  DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion:
+    Type: String
+    AllowedPattern: '^(v\d+\.\d+\.\d+)?$'
+
+  DefaultBucketOnOriginRequestFunctionFromAssociationName:
     Default: ''
     Type: String
-    AllowedPattern: '^(abr-DefaultBucketOnOriginRequestFunction_v\d+-\d+-\d+)?$'
+    AllowedPattern: '^([A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-DefaultBucketOnOriginRequestFunction_v\d+-\d+-\d+-(file|association))?$'
 
-  # DefaultBucketOnCreateObjectFunctionArn:
-  #   Default: ''
-  #   Type: String
-  #   AllowedValues:
-  #     - ''
-  #     - arn:aws:lambda:us-east-1:458362456643:function:abr-DefaultBucketOnCreateObjectFunction
+  DefaultBucketOnCreateObjectFunctionArn:
+    Default: ''
+    Type: String
+    AllowedPattern: '^(arn:aws:lambda:(us-east-1|us-west-2):\d{12}:function:[A-Za-z]+[A-Za-z-]*-DefaultBucketOnCreateObjectFunction)?$'
 
-  CurrentDefaultBucketOnOriginRequestFunctionSemanticVersion:
+  DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion:
     Default: ''
     Type: String
     AllowedPattern: '^(v\d+\.\d+\.\d+)?$'
@@ -33,15 +38,23 @@ Parameters:
 ########################################################################
 
 Conditions:
-  CurrentAndIncomingAreDifferent: !And
-    - !Not
-      - !Equals
-        - ''
-        - !Ref 'CurrentDefaultBucketOnOriginRequestFunctionName'
-    - !Not
-      - !Equals
-        - !Ref 'IncomingDefaultBucketOnOriginRequestFunctionName'
-        - !Ref 'CurrentDefaultBucketOnOriginRequestFunctionName'
+  CreateLambdas: !Equals
+    - 'false'
+    - !Ref IsCreate
+  
+  DoNotCreateLambdas: !Not
+    - !Condition CreateLambdas
+
+  CreateOriginAccessControl: !Equals
+    - 'false'
+    - !Ref IsCreate
+
+  DoNotCreateOriginAccessControl: !Not
+    - !Condition CreateOriginAccessControl
+
+  DefaultBucketOnCreateObjectFunctionArnDoesNotExist: !Equals
+    - ''
+    - !Ref DefaultBucketOnCreateObjectFunctionArn
 
 ########################################################################
 
@@ -80,17 +93,17 @@ Resources:
           - Status: Enabled
             AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 2
-      # NotificationConfiguration: !If
-      #   - DefaultBucketOnCreateObjectFunctionDoesNotExist
-      #   - !Ref 'AWS::NoValue'
-      #   - LambdaConfigurations:
-      #     - Event: s3:ObjectCreated:*
-      #       Filter:
-      #         S3Key:
-      #           Rules:
-      #             - Name: prefix
-      #               Value: image
-      #       Function: !Sub "${DefaultBucketOnCreateObjectFunctionArn}"
+      NotificationConfiguration: !If
+        - DefaultBucketOnCreateObjectFunctionArnDoesNotExist
+        - !Ref 'AWS::NoValue'
+        - LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: image
+            Function: !Sub "${DefaultBucketOnCreateObjectFunctionArn}"
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -130,23 +143,29 @@ Resources:
           Compress: true
           TargetOriginId: !Ref DefaultBucket
           ViewerProtocolPolicy: redirect-to-https
-          LambdaFunctionAssociations:
-            - EventType: origin-request
-              IncludeBody: true
-              LambdaFunctionARN: !Sub
-                  - "${FunctionArn}:${Version}"
-                  - FunctionArn: !GetAtt IncomingDefaultBucketOnOriginRequestFunction.Arn
-                    Version: !GetAtt IncomingDefaultBucketOnOriginRequestFunctionVersion.Version
+          LambdaFunctionAssociations: !If
+            - DoNotCreateLambdas
+            - !Ref 'AWS::NoValue'
+            - - EventType: origin-request
+                IncludeBody: true
+                LambdaFunctionARN: !Sub
+                    - "${FunctionArn}:${Version}"
+                    - FunctionArn: !GetAtt DefaultBucketOnOriginRequestFunctionFromAssociation.Arn
+                      Version: !GetAtt DefaultBucketOnOriginRequestFunctionFromAssociationVersion.Version
         Origins:
           - Id: !Ref DefaultBucket
-            OriginAccessControlId: !GetAtt DefaultBucketCloudFrontOriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ''
             DomainName: !Sub
               - "${Bucket}.s3.${AWS::Region}.${AWS::URLSuffix}"
               - Bucket: !Ref DefaultBucket
-            S3OriginConfig:
-              OriginAccessIdentity: ''
+            OriginAccessControlId: !If
+              - DoNotCreateOriginAccessControl # todo: is this really necessary? may have failed one time due to weird timing
+              - !Ref 'AWS::NoValue'
+              - !GetAtt DefaultBucketCloudFrontOriginAccessControl.Id
   
   DefaultBucketCloudFrontOriginAccessControl:
+    Condition: CreateOriginAccessControl
     Type: AWS::CloudFront::OriginAccessControl
     Properties:
       OriginAccessControlConfig:
@@ -159,10 +178,11 @@ Resources:
 
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
-  IncomingDefaultBucketOnOriginRequestFunction:
+  DefaultBucketOnOriginRequestFunctionFromFile:
+    Condition: CreateLambdas
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Ref IncomingDefaultBucketOnOriginRequestFunctionName
+      FunctionName: !Ref DefaultBucketOnOriginRequestFunctionFromFileName
       Handler: index.handler
       Role: !GetAtt DefaultBucketOnOriginRequestFunctionRole.Arn
       Runtime: nodejs14.x # nodejs16.x
@@ -170,21 +190,22 @@ Resources:
         S3Bucket: !Ref LambdaFunctionBucket
         S3Key: !Sub
           - "default-bucket-on-origin-request/${Version}/index.js.zip"
-          - Version: !Ref IncomingDefaultBucketOnOriginRequestFunctionSemanticVersion
+          - Version: !Ref DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion
 
-  IncomingDefaultBucketOnOriginRequestFunctionVersion:
+  DefaultBucketOnOriginRequestFunctionFromFileVersion:
+    Condition: CreateLambdas
     Type: AWS::Lambda::Version
     Properties:
-      Description: !Ref IncomingDefaultBucketOnOriginRequestFunctionSemanticVersion
-      FunctionName: !GetAtt IncomingDefaultBucketOnOriginRequestFunction.Arn
+      Description: !Ref DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion
+      FunctionName: !GetAtt DefaultBucketOnOriginRequestFunctionFromFile.Arn
 
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
-  CurrentDefaultBucketOnOriginRequestFunction:
-    Condition: CurrentAndIncomingAreDifferent
+  DefaultBucketOnOriginRequestFunctionFromAssociation:
+    Condition: CreateLambdas
     Type: AWS::Lambda::Function
     Properties:
-      FunctionName: !Ref CurrentDefaultBucketOnOriginRequestFunctionName
+      FunctionName: !Ref DefaultBucketOnOriginRequestFunctionFromAssociationName
       Handler: index.handler
       Role: !GetAtt DefaultBucketOnOriginRequestFunctionRole.Arn
       Runtime: nodejs14.x # nodejs16.x
@@ -192,14 +213,14 @@ Resources:
         S3Bucket: !Ref LambdaFunctionBucket
         S3Key: !Sub
           - "default-bucket-on-origin-request/${Version}/index.js.zip"
-          - Version: !Ref CurrentDefaultBucketOnOriginRequestFunctionSemanticVersion
+          - Version: !Ref DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion
 
-  CurrentDefaultBucketOnOriginRequestFunctionVersion:
-    Condition: CurrentAndIncomingAreDifferent
+  DefaultBucketOnOriginRequestFunctionFromAssociationVersion:
+    Condition: CreateLambdas
     Type: AWS::Lambda::Version
     Properties:
-      Description: !Ref CurrentDefaultBucketOnOriginRequestFunctionSemanticVersion
-      FunctionName: !GetAtt CurrentDefaultBucketOnOriginRequestFunction.Arn
+      Description: !Ref DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion
+      FunctionName: !GetAtt DefaultBucketOnOriginRequestFunctionFromAssociation.Arn
 
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
@@ -217,21 +238,31 @@ Resources:
                 - lambda.amazonaws.com
                 - edgelambda.amazonaws.com
       Policies:
-        - PolicyName: LogGroupAccess
+        # - PolicyName: LogGroupAccess
+        #   PolicyDocument:
+        #     Version: 2012-10-17
+        #     Statement:
+        #       - Effect: Allow
+        #         Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnOriginRequestFunction:*"
+        #         Action:
+        #           - logs:CreateLogGroup
+        # - PolicyName: LogStreamAccess
+        #   PolicyDocument:
+        #     Version: 2012-10-17
+        #     Statement:
+        #       - Effect: Allow
+        #         Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnOriginRequestFunction:*"
+        #         Action:
+        #           - logs:CreateLogStream
+        #           - logs:PutLogEvents
+        - PolicyName: LogsAccess
           PolicyDocument:
             Version: 2012-10-17
             Statement:
               - Effect: Allow
-                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/abr-DefaultBucketOnOriginRequestFunction:*"
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnOriginRequestFunction*:*"
                 Action:
                   - logs:CreateLogGroup
-        - PolicyName: LogStreamAccess
-          PolicyDocument:
-            Version: 2012-10-17
-            Statement:
-              - Effect: Allow
-                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnOriginRequestFunction:*"
-                Action:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
 
@@ -250,36 +281,46 @@ Resources:
   #         - "default-bucket-on-create-object/${Version}/index.js.zip"
   #         - Version: !Ref DefaultBucketOnCreateObjectFunctionSemanticVersion
 
-  # DefaultBucketOnCreateObjectFunctionRole:
-  #   Type: AWS::IAM::Role
-  #   Properties:
-  #     AssumeRolePolicyDocument:
-  #       Version: 2012-10-17
-  #       Statement:
-  #         - Effect: Allow
-  #           Action:
-  #             - sts:AssumeRole
-  #           Principal:
-  #             Service:
-  #               - lambda.amazonaws.com
-  #     Policies:
-  #       - PolicyName: LogGroupAccess
-  #         PolicyDocument:
-  #           Version: 2012-10-17
-  #           Statement:
-  #             - Effect: Allow
-  #               Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/abr-DefaultBucketOnCreateObjectFunction:*"
-  #               Action:
-  #                 - logs:CreateLogGroup
-  #       - PolicyName: LogStreamAccess
-  #         PolicyDocument:
-  #           Version: 2012-10-17
-  #           Statement:
-  #             - Effect: Allow
-  #               Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnCreateObjectFunction:*"
-  #               Action:
-  #                 - logs:CreateLogStream
-  #                 - logs:PutLogEvents
+  DefaultBucketOnCreateObjectFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      Policies:
+        # - PolicyName: LogGroupAccess
+        #   PolicyDocument:
+        #     Version: 2012-10-17
+        #     Statement:
+        #       - Effect: Allow
+        #         Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnCreateObjectFunction:*"
+        #         Action:
+        #           - logs:CreateLogGroup
+        # - PolicyName: LogStreamAccess
+        #   PolicyDocument:
+        #     Version: 2012-10-17
+        #     Statement:
+        #       - Effect: Allow
+        #         Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnCreateObjectFunction:*"
+        #         Action:
+        #           - logs:CreateLogStream
+        #           - logs:PutLogEvents
+        - PolicyName: LogsAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnCreateObjectFunction*:*"
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
 
   # DefaultBucketOnCreateObjectFunctionPermission:
   #   Type: AWS::Lambda::Permission
