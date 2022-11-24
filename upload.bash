@@ -3,6 +3,7 @@
 here="$(dirname "$(realpath "$0")")"
 bucket=default
 dry_run=true
+profile=
 
 display_help() {
   echo "
@@ -21,6 +22,9 @@ parse_arguments() {
       if [ 'false' == "${opt#*=}" ]; then
         dry_run=false
       fi
+      ;;
+    --stack=*)
+      stack="${opt#*=}"
       ;;
     --hot)
       dry_run=false
@@ -62,7 +66,7 @@ main() {
   fi
 
   # shellcheck source=/dev/null
-  source "$here/shared.bash"
+  source "$here/shared.bash" "$stack"
 
   bucket_name=$(get_bucket_name 'Default')
 
@@ -72,7 +76,7 @@ main() {
   fi
 
   dest="s3://$bucket_name"
-  cmd="aws s3 cp $src $dest/$src --profile personal"
+  cmd="aws s3 cp $src $dest/$src --profile $profile"
 
   if $dry_run; then
     cmd+=' --dryrun'

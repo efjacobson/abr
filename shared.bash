@@ -1,11 +1,18 @@
 #! /bin/bash
 
-json_config=
+if [ -z "$1" ]; then
+  stack='abr'
+fi
 
+json_config=
 region='us-east-1'
-stack_name="$1-$region"
+stack_name="$stack-$region"
 profile='personal'
 default_aws_arguments="--region $region --profile $profile"
+
+if [ '' == "$account_id" ]; then
+  account_id=$(aws sts get-caller-identity --profile "$profile" | jq -r '.Account')
+fi
 
 set_config() {
   local describe_stacks_outputs && describe_stacks_outputs=$(eval "aws cloudformation describe-stacks $default_aws_arguments \
@@ -30,13 +37,18 @@ init_config() {
 get_bucket_name() {
   local name="$1"
   init_config
-  echo "$json_config" | jq -r ".${name}BucketRef"
+  local bucket_name && bucket_name=$(echo "$json_config" | jq -r ".${name}BucketRef")
+  if [ '' == "$bucket_name" ]; then
+    echo "$account_id-$stack_name-$(pascal_to_kabob "$name")"
+  else
+    echo "$bucket_name"
+  fi
 }
 
 get_distribution_id() {
   local name="$1"
   init_config
-  local id=$(echo "$json_config" | jq -r ".${name}DistributionId")
+  local id && id=$(echo "$json_config" | jq -r ".${name}DistributionId")
   if [ 'null' == "$id" ]; then
     echo ''
     return
@@ -53,4 +65,55 @@ get_function_arn() {
   else
     echo "$arn"
   fi
+}
+
+capitalize() {
+  echo "$1" | tr '[:lower:]' '[:upper:]'
+}
+
+lowercase() {
+  echo "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+kabob_to_snake() {
+  local kabob="$1"
+  local snake="${kabob//-/_}"
+  echo "$snake"
+}
+
+snake_to_kabob() {
+  local snake="$1"
+  local kabob="${snake//_/-}"
+  echo "$kabob"
+}
+
+snake_to_pascal() {
+  local snake="$1"
+  local pascal=''
+  IFS='_' read -ra words <<<"$snake"
+  for word in "${words[@]}"; do
+    first_char=${word:0:1}
+    first_char_capitalized=$(capitalize "$first_char")
+    pascal+=$(echo "$word" | sed "s/^$first_char/$first_char_capitalized/g")
+  done
+  echo "$pascal"
+}
+
+snake_to_camel() {
+  local snake="$1"
+  local pascal && pascal=$(snake_to_pascal "$snake")
+  local first_char=${pascal:0:1}
+  local first_char_lowercased && first_char_lowercased=$(lowercase "$first_char")
+  echo "$pascal" | sed "s/^$first_char/$first_char_lowercased/g"
+}
+
+kabob_to_pascal() {
+  local kabob="$1"
+  local snake && snake=$(kabob_to_snake "$kabob")
+  echo "$(snake_to_pascal "$snake")"
+}
+
+pascal_to_kabob() {
+  local pascal="$1"
+  echo "$pascal" | sed -r 's/([a-z0-9])([A-Z])/\1-\2/g' | tr '[:upper:]' '[:lower:]'
 }

@@ -12,26 +12,26 @@ Parameters:
       - 'true'
       - 'false'
 
+  DefaultBucketOnCreateObjectFunctionArn:
+    Default: ''
+    Type: String
+    AllowedPattern: '^(arn:aws:lambda:(us-east-1|us-west-2):\d{12}:function:[A-Za-z]+[A-Za-z-]*-DefaultBucketOnCreateObjectFunction)?$'
+
   DefaultBucketOnOriginRequestFunctionFromFileName:
     Type: String
-    AllowedPattern: '^([A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-DefaultBucketOnOriginRequestFunction_v\d+-\d+-\d+-(file|association))?$'
+    AllowedPattern: '^([A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-OnOriginRequest_v\d+-\d+-\d+-(file|association))?$'
 
   DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion:
     Type: String
     AllowedPattern: '^(v\d+\.\d+\.\d+)?$'
 
   DefaultBucketOnOriginRequestFunctionFromAssociationName:
-    Default: ''
+    # Default: ''
     Type: String
-    AllowedPattern: '^([A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-DefaultBucketOnOriginRequestFunction_v\d+-\d+-\d+-(file|association))?$'
-
-  DefaultBucketOnCreateObjectFunctionArn:
-    Default: ''
-    Type: String
-    AllowedPattern: '^(arn:aws:lambda:(us-east-1|us-west-2):\d{12}:function:[A-Za-z]+[A-Za-z-]*-DefaultBucketOnCreateObjectFunction)?$'
+    AllowedPattern: '^([A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-OnOriginRequest_v\d+-\d+-\d+-(file|association))?$'
 
   DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion:
-    Default: ''
+    # Default: ''
     Type: String
     AllowedPattern: '^(v\d+\.\d+\.\d+)?$'
 
@@ -45,13 +45,6 @@ Conditions:
   DoNotCreateLambdas: !Not
     - !Condition CreateLambdas
 
-  CreateOriginAccessControl: !Equals
-    - 'false'
-    - !Ref IsCreate
-
-  DoNotCreateOriginAccessControl: !Not
-    - !Condition CreateOriginAccessControl
-
   DefaultBucketOnCreateObjectFunctionArnDoesNotExist: !Equals
     - ''
     - !Ref DefaultBucketOnCreateObjectFunctionArn
@@ -63,7 +56,7 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       AccessControl: BucketOwnerFullControl
-      BucketName: !Sub "${AWS::AccountId}-${AWS::StackName}-lambda-functions"
+      BucketName: !Sub "${AWS::AccountId}-${AWS::StackName}-lambda-function"
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -159,13 +152,9 @@ Resources:
             DomainName: !Sub
               - "${Bucket}.s3.${AWS::Region}.${AWS::URLSuffix}"
               - Bucket: !Ref DefaultBucket
-            OriginAccessControlId: !If
-              - DoNotCreateOriginAccessControl # todo: is this really necessary? may have failed one time due to weird timing
-              - !Ref 'AWS::NoValue'
-              - !GetAtt DefaultBucketCloudFrontOriginAccessControl.Id
+            OriginAccessControlId: !GetAtt DefaultBucketCloudFrontOriginAccessControl.Id
   
   DefaultBucketCloudFrontOriginAccessControl:
-    Condition: CreateOriginAccessControl
     Type: AWS::CloudFront::OriginAccessControl
     Properties:
       OriginAccessControlConfig:

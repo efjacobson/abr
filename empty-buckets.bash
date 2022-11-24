@@ -1,10 +1,11 @@
 #! /bin/bash
 
-bucket=
+bucket='default'
 default_aws_arguments=
 dry_run=true
+profile=
+region=
 here="$(dirname "$(realpath "$0")")"
-stack_name=
 
 display_help() {
   echo "
@@ -22,6 +23,9 @@ parse_arguments() {
       if [ 'false' == "${opt#*=}" ]; then
         dry_run=false
       fi
+      ;;
+    --stack=*)
+      stack="${opt#*=}"
       ;;
     --bucket=*)
       bucket="${opt#*=}"
@@ -48,20 +52,20 @@ main() {
   fi
 
   # shellcheck source=/dev/null
-  source "$here/shared.bash"
+  source "$here/shared.bash" "$stack"
 
   local buckets=()
   if [ 'all' != "$bucket" ]; then
-    buckets+=("458362456643-$stack_name-default")
+    buckets+=("$account_id-$stack_name-$bucket")
   else
-    for b in $(eval "aws cloudformation list-stack-resources --stack-name $stack_name $default_aws_arguments" | jq -r '.StackResourceSummaries[] | select(.ResourceType == "AWS::S3::Bucket") | .PhysicalResourceId'); do
+    for b in $(eval "aws cloudformation list-stack-resources --stack-name $stack_name --region $region --profile $profile" | jq -r '.StackResourceSummaries[] | select(.ResourceType == "AWS::S3::Bucket") | .PhysicalResourceId'); do
       buckets+=("$b")
     done
   fi
 
   local rm_command
   for bucket in "${buckets[@]}"; do
-    rm_command="aws s3 rm s3://$bucket --recursive --profile personal"
+    rm_command="aws s3 rm s3://$bucket --recursive --profile $profile"
     if $dry_run; then
       rm_command+=' --dryrun'
     fi
