@@ -15,7 +15,11 @@ Parameters:
   DefaultBucketOnCreateObjectFunctionArn:
     Default: ''
     Type: String
-    AllowedPattern: '^(arn:aws:lambda:(us-east-1|us-west-2):\d{12}:function:[A-Za-z]+[A-Za-z-]*-DefaultBucketOnCreateObjectFunction)?$'
+    AllowedPattern: '^(arn:aws:lambda:(us-east-1|us-west-2):\d{12}:function:[A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-DefaultBucketOnCreateObjectFunction)?$'
+
+  DefaultBucketOnCreateObjectFunctionSemanticVersion:
+    Type: String
+    AllowedPattern: '^(v\d+\.\d+\.\d+)?$'
 
   DefaultBucketOnOriginRequestFunctionFromFileName:
     Type: String
@@ -49,6 +53,9 @@ Conditions:
     - ''
     - !Ref DefaultBucketOnCreateObjectFunctionArn
 
+  DefaultBucketOnCreateObjectFunctionArnExists: !Not
+    - !Condition DefaultBucketOnCreateObjectFunctionArnDoesNotExist
+
 ########################################################################
 
 Resources:
@@ -74,6 +81,7 @@ Resources:
 
   DefaultBucket:
     Type: AWS::S3::Bucket
+    Condition: CreateLambdas
     Properties:
       AccessControl: BucketOwnerFullControl
       BucketName: !Sub "${AWS::AccountId}-${AWS::StackName}-default"
@@ -96,7 +104,7 @@ Resources:
                 Rules:
                   - Name: prefix
                     Value: image
-            Function: !Sub "${DefaultBucketOnCreateObjectFunctionArn}"
+            Function: !Ref DefaultBucketOnCreateObjectFunctionArn
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -105,6 +113,7 @@ Resources:
 
   DefaultBucketPolicy:
     Type: AWS::S3::BucketPolicy
+    Condition: CreateLambdas
     Properties:
       Bucket: !Ref DefaultBucket
       PolicyDocument:
@@ -128,6 +137,7 @@ Resources:
 
   PrimaryDistribution:
     Type: AWS::CloudFront::Distribution
+    Condition: CreateLambdas
     Properties:
       DistributionConfig:
         Enabled: true
@@ -156,14 +166,24 @@ Resources:
   
   DefaultBucketCloudFrontOriginAccessControl:
     Type: AWS::CloudFront::OriginAccessControl
-    Properties:
+    Properties: 
       OriginAccessControlConfig:
+        Description: Default Origin Access Control
+        Name: !Ref AWS::StackName
         OriginAccessControlOriginType: s3
         SigningBehavior: always
         SigningProtocol: sigv4
-        Name: !Sub
-          - "${DefaultBucket}-cloudfront-origin-access-control"
-          - DefaultBucket: !Ref 'DefaultBucket'
+
+  # DefaultBucketCloudFrontOriginAccessControl:
+  #   Type: AWS::CloudFront::OriginAccessControl
+  #   Properties:
+  #     OriginAccessControlConfig:
+  #       OriginAccessControlOriginType: s3
+  #       SigningBehavior: always
+  #       SigningProtocol: sigv4
+  #       Name: !Sub
+  #         - "${DefaultBucket}-cloudfront-origin-access-control"
+  #         - DefaultBucket: !Ref 'DefaultBucket'
 
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
@@ -257,18 +277,19 @@ Resources:
 
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
-  # DefaultBucketOnCreateObjectFunction:
-  #   Type: AWS::Lambda::Function
-  #   Properties:
-  #     FunctionName: !Sub "${AWS::StackName}-DefaultBucketOnCreateObjectFunction"
-  #     Handler: index.handler
-  #     Role: !GetAtt DefaultBucketOnCreateObjectFunctionRole.Arn
-  #     Runtime: nodejs14.x # nodejs16.x
-  #     Code:
-  #       S3Bucket: !Ref LambdaFunctionBucket
-  #       S3Key: !Sub
-  #         - "default-bucket-on-create-object/${Version}/index.js.zip"
-  #         - Version: !Ref DefaultBucketOnCreateObjectFunctionSemanticVersion
+  DefaultBucketOnCreateObjectFunction:
+    Type: AWS::Lambda::Function
+    Condition: CreateLambdas
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-DefaultBucketOnCreateObjectFunction"
+      Handler: index.handler
+      Role: !GetAtt DefaultBucketOnCreateObjectFunctionRole.Arn
+      Runtime: nodejs14.x # nodejs16.x
+      Code:
+        S3Bucket: !Ref LambdaFunctionBucket
+        S3Key: !Sub
+          - "default-bucket-on-create-object/${Version}/index.js.zip"
+          - Version: !Ref DefaultBucketOnCreateObjectFunctionSemanticVersion
 
   DefaultBucketOnCreateObjectFunctionRole:
     Type: AWS::IAM::Role
@@ -311,13 +332,14 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
 
-  # DefaultBucketOnCreateObjectFunctionPermission:
-  #   Type: AWS::Lambda::Permission
-  #   Properties:
-  #     Action: 'lambda:InvokeFunction'
-  #     FunctionName: !GetAtt DefaultBucketOnCreateObjectFunction.Arn
-  #     Principal: s3.amazonaws.com
-  #     SourceAccount: !Ref AWS::AccountId
-  #     SourceArn: !Sub
-  #       - "arn:${AWS::Partition}:s3:::${Bucket}"
-  #       - Bucket: !Ref "DefaultBucket"
+  DefaultBucketOnCreateObjectFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Condition: CreateLambdas
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt DefaultBucketOnCreateObjectFunction.Arn
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub
+        - "arn:${AWS::Partition}:s3:::${Bucket}"
+        - Bucket: !Ref "DefaultBucket"

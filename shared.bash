@@ -1,7 +1,7 @@
 #! /bin/bash
 
 if [ -z "$1" ]; then
-  stack='abr'
+  readonly stack='abr'
 fi
 
 json_config=
@@ -15,6 +15,7 @@ if [ '' == "$account_id" ]; then
 fi
 
 set_config() {
+  # todo: get this directly from the resources of the stack, not the outputs
   local describe_stacks_outputs && describe_stacks_outputs=$(eval "aws cloudformation describe-stacks $default_aws_arguments \
     --stack-name $stack_name \
     --query \"Stacks[0].Outputs\"")
