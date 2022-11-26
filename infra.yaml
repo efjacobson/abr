@@ -12,6 +12,13 @@ Parameters:
       - 'true'
       - 'false'
 
+  ShouldUseFunctionFromAssociation:
+    Default: 'true'
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+
   DefaultBucketOnCreateObjectFunctionArn:
     Default: ''
     Type: String
@@ -48,6 +55,10 @@ Conditions:
   
   DoNotCreateLambdas: !Not
     - !Condition CreateLambdas
+
+  UseFunctionFromAssociation: !Equals
+    - 'true'
+    - !Ref ShouldUseFunctionFromAssociation
 
   DefaultBucketOnCreateObjectFunctionArnDoesNotExist: !Equals
     - ''
@@ -146,15 +157,28 @@ Resources:
           Compress: true
           TargetOriginId: !Ref DefaultBucket
           ViewerProtocolPolicy: redirect-to-https
-          LambdaFunctionAssociations: !If
-            - DoNotCreateLambdas
-            - !Ref 'AWS::NoValue'
-            - - EventType: origin-request
-                IncludeBody: true
-                LambdaFunctionARN: !Sub
-                    - "${FunctionArn}:${Version}"
-                    - FunctionArn: !GetAtt DefaultBucketOnOriginRequestFunctionFromAssociation.Arn
-                      Version: !GetAtt DefaultBucketOnOriginRequestFunctionFromAssociationVersion.Version
+          LambdaFunctionAssociations:
+            - EventType: origin-request
+              IncludeBody: true
+              LambdaFunctionARN: !If
+                - UseFunctionFromAssociation
+                - !Sub
+                  - "${FunctionArn}:${Version}"
+                  - FunctionArn: !GetAtt DefaultBucketOnOriginRequestFunctionFromAssociation.Arn
+                    Version: !GetAtt DefaultBucketOnOriginRequestFunctionFromAssociationVersion.Version
+                - !Sub
+                  - "${FunctionArn}:${Version}"
+                  - FunctionArn: !GetAtt DefaultBucketOnOriginRequestFunctionFromFile.Arn
+                    Version: !GetAtt DefaultBucketOnOriginRequestFunctionFromFileVersion.Version
+          # LambdaFunctionAssociations: !If
+          #   - DoNotCreateLambdas
+          #   - !Ref 'AWS::NoValue'
+          #   - - EventType: origin-request
+          #       IncludeBody: true
+          #       LambdaFunctionARN: !Sub
+          #           - "${FunctionArn}:${Version}"
+          #           - FunctionArn: !GetAtt DefaultBucketOnOriginRequestFunctionFromAssociation.Arn
+          #             Version: !GetAtt DefaultBucketOnOriginRequestFunctionFromAssociationVersion.Version
         Origins:
           - Id: !Ref DefaultBucket
             S3OriginConfig:

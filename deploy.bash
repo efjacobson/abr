@@ -3,7 +3,7 @@
 attempts=0
 readonly max_attempts=4
 # (us(-gov)?|af|ap|ca|eu|me|sa)-(north|east|south|west|central)+-\d+
-
+last_good_parameter_overrides=()
 default_aws_arguments=
 region=
 profile=
@@ -118,6 +118,14 @@ deploy_stack() {
   parameter_overrides+=('IsCreate=false')
   parameter_overrides_option="--parameter-overrides ${parameter_overrides[*]}"
 
+  # for last_good_override in "${last_good_parameter_overrides[@]}"; do
+  #   echo "last good deploy used override: $last_good_override"
+  # done
+
+  # for override in "${parameter_overrides[@]}"; do
+  #   echo "about to deploy with override: $override"
+  # done
+
   local deploy_command="aws cloudformation deploy \
     --template-file $deploy_template  \
     --stack-name $stack_name \
@@ -125,9 +133,9 @@ deploy_stack() {
     $parameter_overrides_option \
     $default_aws_arguments"
 
-  if $dry_run; then
-    deploy_command+=' --no-execute-changeset'
-  fi
+  # if $dry_run; then
+  #   deploy_command+=' --no-execute-changeset'
+  # fi
 
   echo 'deploying...'
   local deploy_output && deploy_output=$(eval "$deploy_command")
@@ -143,19 +151,21 @@ deploy_stack() {
   if [[ ! "$ultimate_line" =~ ^aws\scloudformation\sdescribe-change-set ]]; then
     return
   fi
-
-  if $dry_run; then
-    local describe_command="$ultimate_line $default_aws_arguments"
-    local describe_output && describe_output=$(eval "$describe_command")
-    label=describe_command
-    if $dry_run; then
-      label="[dry run] $label"
-    fi
-    echo "$describe_output"
-    return
-  fi
-
+  last_good_parameter_overrides=parameter_overrides
   set_config
+
+  # if $dry_run; then
+  #   local describe_command="$ultimate_line $default_aws_arguments"
+  #   local describe_output && describe_output=$(eval "$describe_command")
+  #   label=describe_command
+  #   if $dry_run; then
+  #     label="[dry run] $label"
+  #   fi
+  #   echo "$describe_output"
+  #   return
+  # fi
+
+  # set_config
 }
 
 get_latest_version() {
@@ -435,6 +445,8 @@ main() {
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationName=$stack_name-${short_name}_$latest_on_origin_version_friendly-association")
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion=$latest_on_origin_version")
     deploy_stack "${parameter_overrides[@]}"
+    echo 'todo: check if previous deploy was successful before doing this next deploy'
+    deploy_stack "${parameter_overrides[@]}"
     exit
   fi
 
@@ -446,6 +458,7 @@ main() {
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationName=$stack_name-${short_name}_$latest_on_origin_version_friendly-association")
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion=$latest_on_origin_version")
     deploy_stack "${parameter_overrides[@]}"
+    echo 'should deploy again here 2?'
     exit
   fi
 
@@ -459,6 +472,7 @@ main() {
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationName=$stack_name-${short_name}_$latest_on_origin_version_friendly-association")
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion=$latest_on_origin_version")
     deploy_stack "${parameter_overrides[@]}"
+    echo 'should deploy again here? 3'
     exit
   fi
 
@@ -469,20 +483,49 @@ main() {
   version="${origin_request_lambda_function_arn##*_}"
   version=$(echo "$version" | sed -E 's/:[0-9]+$//')
   version="${version//-/.}"
-  version="${version//.association/}"
+  version=$(echo "$version" | sed 's/\.\(file\|association\)$//')
+  # version="${version//.association/}"
+  # version="${version//.file/}"
   SemanticVersionFromDistro="$version"
+  echo "SemanticVersionFromDistro $SemanticVersionFromDistro"
+  echo "SemanticVersionFromFile $SemanticVersionFromFile"
   if [ "$SemanticVersionFromDistro" == "$SemanticVersionFromFile" ]; then
     echo 'latest and associated are equal...'
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromFileName=$stack_name-${short_name}_$latest_on_origin_version_friendly-file")
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion=$latest_on_origin_version")
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationName=$stack_name-${short_name}_$latest_on_origin_version_friendly-association")
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion=$latest_on_origin_version")
+    parameter_overrides+=('ShouldUseFunctionFromAssociation=true')
+    echo 'set ShouldUseFunctionFromAssociation to true'
     deploy_stack "${parameter_overrides[@]}"
+    # echo 'nothing association related to do but ofc still need to deploy for normals stuff'
     exit
   fi
 
   eval "aws lambda get-function --function-name $stack_name-${short_name}_$latest_on_origin_version_friendly-file --region $region --profile $profile" >"$get_function_path" 2>&1
   get_function_response="$(cat "$get_function_path")"
+  if [[ "$get_function_response" =~ .*ResourceNotFoundException.* ]]; then
+    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromFileName=$stack_name-${short_name}_$latest_on_origin_version_friendly-file")
+    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion=$latest_on_origin_version")
+
+    prefix="arn:aws:lambda:$region:$account_id:function:"
+    associated_lambda_name=${origin_request_lambda_function_arn/$prefix/}
+    associated_lambda_name=$(echo "$associated_lambda_name" | sed 's/:[[:digit:]]\+//')
+    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationName=$associated_lambda_name")
+    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion=$SemanticVersionFromDistro")
+    deploy_stack "${parameter_overrides[@]}"
+    echo 'should deploy again here? 5'
+    echo 'after checking for errors, should deploy again immediately? do you really need to go through the whole flow again to get into the else for this if?'
+  else # todo: check for success properly here and in many other places
+    echo 'function already exists'
+    echo "get_function_response: $get_function_response"
+    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationName=$stack_name-${short_name}_$latest_on_origin_version_friendly-association")
+    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion=$latest_on_origin_version")
+    parameter_overrides+=('ShouldUseFunctionFromAssociation=false')
+    deploy_stack "${parameter_overrides[@]}"
+    echo 'should deploy again here? 6'
+    echo 'assuming things went well...'
+  fi
   rm -f "$get_function_path"
   exit
 
