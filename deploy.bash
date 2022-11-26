@@ -8,12 +8,18 @@ default_aws_arguments=
 region=
 profile=
 dry_run=false # todo: danger, sort of. looks like its gonna get stuck in a loop
-here="$(dirname "$(realpath "$0")")"
-readonly here
+
 stack='abr'
 stack_name=
 account_id=
-template="$here/infra.yaml"
+
+here="$(dirname "$(realpath "$0")")"
+readonly here
+readonly template="$here/infra.yaml"
+readonly drift_path="$here/.$stack-drift"
+readonly create_path="$here/.$stack-create"
+readonly head_object_path="$here/.$stack-head-object"
+readonly get_function_path="$here/.$stack-get-function"
 
 display_help() {
   echo "
@@ -122,10 +128,10 @@ deploy_stack() {
   #   echo "last good deploy used override: $last_good_override"
   # done
 
-  # for override in "${parameter_overrides[@]}"; do
-  #   echo "about to deploy with override: $override"
-  # done
-
+  for override in "${parameter_overrides[@]}"; do
+    echo "about to deploy with override: $override"
+  done
+  exit
   local deploy_command="aws cloudformation deploy \
     --template-file $deploy_template  \
     --stack-name $stack_name \
@@ -188,7 +194,8 @@ upload_lambda_functions() {
     fi
   done
 
-  bucket="$(get_bucket_name 'LambdaFunction')"
+  local -r bucket="$(get_bucket_name 'LambdaFunction')"
+  local head_object_response
   while IFS= read -r filepath; do
     base_name="$(basename "$filepath")"
     dir_name="$(dirname "$(realpath "$filepath")")"
@@ -202,14 +209,26 @@ upload_lambda_functions() {
     zip -j -X -q "$zip_path" "$filepath"
     checksum="$(openssl dgst -sha256 -binary "$zip_path" | openssl enc -base64)"
 
-    aws s3api put-object \
-      --bucket "$bucket" \
-      --key "$key" \
-      --body "$zip_path" \
-      --checksum-sha256 "$checksum" \
-      --profile "$profile" >>/dev/null
-    echo "uploaded $key to s3://$bucket/$key with sha256 checksum $checksum"
-    rm -f "$zip_path"
+    aws s3api head-object --bucket "$bucket" --key "$key" --checksum-mode ENABLED --profile "$profile" >"$head_object_path" 2>&1
+    sed -i '/^$/d' "$head_object_path"
+    head_object_response=$(cat "$head_object_path")
+    if [ 'An error occurred (404) when calling the HeadObject operation: Not Found' == "$head_object_response" ]; then
+      aws s3api put-object \
+        --bucket "$bucket" \
+        --key "$key" \
+        --body "$zip_path" \
+        --checksum-sha256 "$checksum" \
+        --profile "$profile" >>/dev/null
+      echo "uploaded $key to s3://$bucket/$key with sha256 checksum $checksum"
+      rm -f "$zip_path"
+    elif [ "$checksum" == "$(jq -r '.ChecksumSHA256' "$head_object_path")" ]; then
+      rm -f "$zip_path"
+      continue
+    else
+      echo "$head_object_response"
+      echo "local/s3 checksums do not match for $key, check the response above"
+      exit
+    fi
   done < <(find "$here/lambda-functions/." -name '*.js')
 
   for function in "$here/lambda-functions"/*; do
@@ -231,17 +250,8 @@ main() {
   # shellcheck source=/dev/null
   source "$here/shared.bash" "$stack"
 
-  local -r drift_path="$here/.$stack-drift"
-  local -r create_path="$here/.$stack-create"
-  local -r head_object_path="$here/.$stack-head-object"
-  local -r get_function_path="$here/.$stack-get-function"
-
   attempts=$((attempts + 1))
   if [ $attempts -gt $max_attempts ]; then
-    # 1 to create without lambdas
-    # 2 to upload lambda zips
-    # 3 to deploy with lambdas
-    # 4 to ?
     for path in $drift_path $create_path $head_object_path; do
       if [ -f "$path" ]; then
         rm -f "$path"
@@ -252,21 +262,17 @@ main() {
   fi
   echo "attempts: $attempts"
 
-  local default_bucket='default-bucket'
-
-  latestOnOrigin=$(get_latest_version default-bucket-on-origin-request)
-  if [ '' == "$latestOnOrigin" ]; then
-    echo 'gotta make some functions bro'
-    exit
-  fi
-  SemanticVersionFromFile="$latestOnOrigin"
-  FriendlySemanticVersionFromFile="${latestOnOrigin//./-}"
+  local -r latest_on_create='default-bucket-on-create-object'
+  local -r latest_on_origin='default-bucket-on-origin-request'
+  local -r latest_on_create_version=$(get_latest_version "$latest_on_create")
+  local -r latest_on_origin_version=$(get_latest_version "$latest_on_origin")
+  local -r latest_on_origin_version_friendly="${latest_on_origin_version//./-}"
 
   local describe_response
   local status
   if [ -f "$create_path" ]; then
-    describe_response=$(aws cloudformation describe-stacks --stack-name="$stack_name" --profile "$profile" --region="$region")
-    status=$(echo "$describe_response" | jq -r '.Stacks[0].StackStatus')
+    local -r describe_response=$(aws cloudformation describe-stacks --stack-name="$stack_name" --profile "$profile" --region="$region")
+    local -r status=$(echo "$describe_response" | jq -r '.Stacks[0].StackStatus')
     echo "stack '$stack_name' has status '$status'..."
     if [ 'CREATE_COMPLETE' == "$status" ]; then
       cat "$create_path"
@@ -301,6 +307,7 @@ main() {
         local template_path && template_path=$(create_deploy_template)
 
         echo 'creating stack...'
+        exit
         eval "aws cloudformation create-stack \
           --stack-name $stack_name \
           --template-body file://$template_path \
@@ -308,7 +315,7 @@ main() {
           --profile $profile \
           --capabilities CAPABILITY_IAM \
           --enable-termination-protection \
-          --parameters ParameterKey=IsCreate,ParameterValue=true ParameterKey=DefaultBucketOnCreateObjectFunctionSemanticVersion,ParameterValue=$(get_latest_version 'default-bucket-on-create-object') ParameterKey=DefaultBucketOnOriginRequestFunctionFromFileName,ParameterValue=$stack_name-OnOriginRequest_$FriendlySemanticVersionFromFile-file ParameterKey=DefaultBucketOnOriginRequestFunctionFromAssociationName,ParameterValue=$stack_name-OnOriginRequest_$FriendlySemanticVersionFromFile-association  ParameterKey=DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion,ParameterValue=$SemanticVersionFromFile ParameterKey=DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion,ParameterValue=$SemanticVersionFromFile" >"$create_path" 2>&1
+          --parameters ParameterKey=IsCreate,ParameterValue=true ParameterKey=DefaultBucketOnCreateObjectFunctionSemanticVersion,ParameterValue=$(get_latest_version 'default-bucket-on-create-object') ParameterKey=DefaultBucketOnOriginRequestFunctionFromFileName,ParameterValue=$stack_name-OnOriginRequest_$latest_on_origin_version_friendly-file ParameterKey=DefaultBucketOnOriginRequestFunctionFromAssociationName,ParameterValue=$stack_name-OnOriginRequest_$latest_on_origin_version_friendly-association  ParameterKey=DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion,ParameterValue=$latest_on_origin_version ParameterKey=DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion,ParameterValue=$latest_on_origin_version" >"$create_path" 2>&1
 
         if [[ $(cat "$create_path") =~ .*error.* ]]; then
           cat "$create_path"
@@ -373,22 +380,6 @@ main() {
     fi
   fi
 
-  local latest_default_bucket_on_origin_request_semantic_version
-  local latest_default_bucket_on_origin_request_semantic_version_friendly
-  local latest_on_origin && latest_on_origin=$(kabob_to_snake "$default_bucket-on-origin-request")
-  declare "latest_${latest_on_origin}_semantic_version"="$(get_latest_version "$(snake_to_kabob "$latest_on_origin")")"
-  local latest_on_origin_version="$latest_default_bucket_on_origin_request_semantic_version"
-  declare "latest_${latest_on_origin}_semantic_version_friendly"="${latest_on_origin_version//./-}"
-  local latest_on_origin_version_friendly="$latest_default_bucket_on_origin_request_semantic_version_friendly"
-
-  local latest_default_bucket_on_create_object_semantic_version
-  local latest_default_bucket_on_create_object_semantic_version_friendly
-  local latest_on_create && latest_on_create=$(kabob_to_snake "$default_bucket-on-create-object")
-  declare "latest_${latest_on_create}_semantic_version"="$(get_latest_version "$(snake_to_kabob "$latest_on_create")")"
-  local latest_on_create_version="$latest_default_bucket_on_create_object_semantic_version"
-  declare "latest_${latest_on_create}_semantic_version_friendly"="${latest_on_create_version//./-}"
-  local latest_on_create_version_friendly="$latest_default_bucket_on_create_object_semantic_version_friendly"
-
   local parameter_overrides=()
 
   local need_to_upload=false
@@ -409,6 +400,9 @@ main() {
     aws s3api head-object --bucket "$bucket" --key "$key" --profile "$profile" >"$head_object_path" 2>&1
     head_object_response=$(cat "$head_object_path")
     _regex='Not Found$'
+    echo "$head_object_response"
+    echo "$key"
+    echo "$object"
     if [[ "$head_object_response" =~ $_regex ]]; then
       rm -f "$head_object_path"
       need_to_upload=true
@@ -488,8 +482,7 @@ main() {
   # version="${version//.file/}"
   SemanticVersionFromDistro="$version"
   echo "SemanticVersionFromDistro $SemanticVersionFromDistro"
-  echo "SemanticVersionFromFile $SemanticVersionFromFile"
-  if [ "$SemanticVersionFromDistro" == "$SemanticVersionFromFile" ]; then
+  if [ "$SemanticVersionFromDistro" == "$latest_on_origin_version" ]; then
     echo 'latest and associated are equal...'
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromFileName=$stack_name-${short_name}_$latest_on_origin_version_friendly-file")
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion=$latest_on_origin_version")
@@ -499,6 +492,12 @@ main() {
     echo 'set ShouldUseFunctionFromAssociation to true'
     deploy_stack "${parameter_overrides[@]}"
     # echo 'nothing association related to do but ofc still need to deploy for normals stuff'
+    exit
+  fi
+
+  high_version=$(highest_version "$SemanticVersionFromDistro" "$latest_on_origin_version")
+  if [ "$high_version" == "$SemanticVersionFromDistro" ]; then
+    echo "distro is associated with version '$SemanticVersionFromDistro', local version is '$latest_on_origin_version'. refusing to update distro with lower version..."
     exit
   fi
 
@@ -537,6 +536,38 @@ main() {
   # then deploy with both v2
 
   # improvements: naming, only having 2 when needed
+}
+
+highest_version() {
+  local -r version_a="$1"
+  local -r version_b="$2"
+  if [ "$version_a" == "$version_b" ]; then
+    echo "versions are the same, chucklehead..." >&2
+    exit
+  fi
+
+  local a=${version_a/v/}
+  a=${a//./ }
+  read -r -a version_a_as_array <<<"$a"
+
+  local b=${version_b/v/}
+  b=${b//./ }
+  read -r -a version_b_as_array <<<"$b"
+
+  local highest
+  local length="${#version_a_as_array[@]}"
+  for ((i = 0; i <= length; i++)); do
+    if [ "${version_a_as_array[$i]}" -eq "${version_b_as_array[$i]}" ]; then
+      continue
+    elif [ "${version_a_as_array[$i]}" -gt "${version_b_as_array[$i]}" ]; then
+      highest="$version_a"
+      break
+    else
+      highest="$version_b"
+      break
+    fi
+  done
+  echo "$highest"
 }
 
 main
