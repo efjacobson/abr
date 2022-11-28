@@ -1,7 +1,7 @@
 #! /bin/bash
 
 attempts=0
-readonly max_attempts=4
+readonly max_attempts=1
 # (us(-gov)?|af|ap|ca|eu|me|sa)-(north|east|south|west|central)+-\d+
 last_good_parameter_overrides=()
 default_aws_arguments=
@@ -117,16 +117,14 @@ create_deploy_template() {
 }
 
 deploy_stack() {
+  echo 'wrong'
+  exit
   local parameter_overrides=("$@")
   local deploy_template && deploy_template=$(create_deploy_template "${parameter_overrides[@]}")
 
   parameter_overrides+=("DefaultBucketOnCreateObjectFunctionArn=$(get_function_arn 'DefaultBucketOnCreateObjectFunction')")
   parameter_overrides+=('IsCreate=false')
   parameter_overrides_option="--parameter-overrides ${parameter_overrides[*]}"
-
-  # for last_good_override in "${last_good_parameter_overrides[@]}"; do
-  #   echo "last good deploy used override: $last_good_override"
-  # done
 
   for override in "${parameter_overrides[@]}"; do
     echo "about to deploy with override: $override"
@@ -138,10 +136,6 @@ deploy_stack() {
     --capabilities CAPABILITY_IAM \
     $parameter_overrides_option \
     $default_aws_arguments"
-
-  # if $dry_run; then
-  #   deploy_command+=' --no-execute-changeset'
-  # fi
 
   echo 'deploying...'
   local deploy_output && deploy_output=$(eval "$deploy_command")
@@ -174,6 +168,37 @@ deploy_stack() {
   # set_config
 }
 
+deploy_stack_new() {
+  local parameters=$1
+
+  on_create_arn=$(get_function_arn 'DefaultBucketOnCreateObjectFunction')
+  if [ -n "$on_create_arn" ]; then
+    parameters=$(jq --arg arn "$on_create_arn" '.DefaultBucketOnCreateObjectFunctionArn = $arn' <<<"$parameters")
+  fi
+  parameters=$(jq '.IsCreate = false' <<<"$parameters")
+
+  echo "$(for_update "$parameters")"
+
+  local -r deploy_response=$(eval "aws cloudformation deploy \
+    --region $region \
+    --profile $profile \
+    --stack-name $stack_name \
+    --capabilities CAPABILITY_IAM \
+    --template-file $(create_deploy_template) \
+    --parameter-overrides $(for_update "$parameters")" 2>&1 | sed '/^$/d')
+
+  # aws cloudformation deploy \
+  #   --region "$region" \
+  #   --profile "$profile" \
+  #   --stack-name "$stack_name" \
+  #   --capabilities CAPABILITY_IAM \
+  #   --template-file "$(create_deploy_template)" \
+  #   --parameter-overrides "$(for_update "$parameters")" | jq
+
+  set_config
+  echo "$deploy_response"
+}
+
 get_latest_version() {
   local function="$1"
   local latest
@@ -185,6 +210,38 @@ get_latest_version() {
     exit
   fi
   echo "$latest"
+}
+
+create_stack() {
+  echo 'creating stack...'
+  eval "aws cloudformation create-stack \
+    --stack-name $stack_name \
+    --template-body file://$(create_deploy_template) \
+    --region $region \
+    --profile $profile \
+    --capabilities CAPABILITY_IAM \
+    --enable-termination-protection \
+    --parameters $(for_create "$1")" | jq
+
+  local describe_response
+  local status
+  local flag=true # simulate do-while loop
+  while $flag || [ 'CREATE_IN_PROGRESS' == "$status" ]; do
+    if ! $flag; then
+      echo 'sleeping for 60 seconds...'
+      sleep 60
+    fi
+    flag=false
+    describe_response=$(aws cloudformation describe-stacks --stack-name="$stack_name" --profile "$profile" --region="$region" 2>&1 | sed '/^$/d')
+    status=$(jq -r '.Stacks[0].StackStatus' <<<"$describe_response")
+  done
+  if [ 'CREATE_COMPLETE' != "$status" ]; then
+    jq <<<"$describe_response"
+    echo 'something went wrong ^^'
+    exit
+  fi
+  echo 'stack creation complete...'
+  return 0
 }
 
 upload_lambda_functions() {
@@ -236,6 +293,23 @@ upload_lambda_functions() {
   done
 }
 
+for_create() {
+  local parameters=''
+  while read -r entry; do
+    parameters+="ParameterKey=$(jq -r '.key' <<<"$entry"),ParameterValue=$(jq -r '.value' <<<"$entry") "
+  done < <(jq -c 'to_entries[]' <<<"$1")
+  echo "$parameters"
+}
+
+for_update() {
+  local overrides=''
+  while read -r key; do
+    value=$(jq -r --arg k "$key" '."\($k)"' <<<"$1")
+    overrides+="$key=$value "
+  done < <(jq -r 'keys[]' <<<"$1")
+  echo "$overrides"
+}
+
 main() {
   if ! [ -x "$(command -v jq)" ]; then
     echo 'exiting early: jq not installed'
@@ -268,162 +342,89 @@ main() {
   local -r latest_on_origin_version=$(get_latest_version "$latest_on_origin")
   local -r latest_on_origin_version_friendly="${latest_on_origin_version//./-}"
 
-  local describe_response
-  local status
-  if [ -f "$create_path" ]; then
-    local -r describe_response=$(aws cloudformation describe-stacks --stack-name="$stack_name" --profile "$profile" --region="$region")
-    local -r status=$(echo "$describe_response" | jq -r '.Stacks[0].StackStatus')
-    echo "stack '$stack_name' has status '$status'..."
-    if [ 'CREATE_COMPLETE' == "$status" ]; then
-      cat "$create_path"
-      rm -f "$create_path"
-    elif [ 'CREATE_IN_PROGRESS' == "$status" ]; then
-      echo 'sleeping for 60 seconds...'
-      attempts=$((attempts - 1))
-      sleep 60
-      main
-      exit
-    else
-      echo "$describe_response"
-      rm -f "$create_path"
+  local parameters
+  parameters='{'
+  parameters+='"IsCreate":true'
+  parameters+=','
+  parameters+="\"DefaultBucketOnCreateObjectFunctionSemanticVersion\":\"$(get_latest_version 'default-bucket-on-create-object')\""
+  parameters+=','
+  parameters+="\"DefaultBucketOnOriginRequestFunctionFromFileName\":\"$stack_name-OnOriginRequest_$latest_on_origin_version_friendly-file\""
+  parameters+=','
+  parameters+="\"DefaultBucketOnOriginRequestFunctionFromAssociationName\":\"$stack_name-OnOriginRequest_$latest_on_origin_version_friendly-association\""
+  parameters+=','
+  parameters+="\"DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion\":\"$latest_on_origin_version\""
+  parameters+=','
+  parameters+="\"DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion\":\"$latest_on_origin_version\""
+  parameters+='}'
+
+  local -r describe_response=$(aws cloudformation describe-stacks \
+    --stack-name="$stack_name" \
+    --profile "$profile" \
+    --region="$region" 2>&1 | sed '/^$/d')
+  if [ "$describe_response" == "An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id $stack_name does not exist" ]; then
+    if ! create_stack "$parameters"; then
       exit
     fi
-  fi
-
-  local drift_detection_status
-  if [ ! -f "$drift_path" ]; then
-    eval "aws cloudformation detect-stack-drift \
+  else
+    local -r detection_id=$(eval "aws cloudformation detect-stack-drift \
       --stack-name $stack_name \
-      --query=\"StackDriftDetectionId\" \
       --output=text \
       --profile $profile \
-      --region $region" >"$drift_path" 2>&1
+      --region $region")
 
-    local drift_response && drift_response=$(cat "$drift_path")
-    if [[ $drift_response =~ .*error.* ]]; then
-      rm -f "$drift_path"
-
-      if [[ ! $drift_response =~ .*ROLLBACK_COMPLETE.* ]]; then
-        local template_path && template_path=$(create_deploy_template)
-
-        echo 'creating stack...'
-        exit
-        eval "aws cloudformation create-stack \
-          --stack-name $stack_name \
-          --template-body file://$template_path \
-          --region $region \
-          --profile $profile \
-          --capabilities CAPABILITY_IAM \
-          --enable-termination-protection \
-          --parameters ParameterKey=IsCreate,ParameterValue=true ParameterKey=DefaultBucketOnCreateObjectFunctionSemanticVersion,ParameterValue=$(get_latest_version 'default-bucket-on-create-object') ParameterKey=DefaultBucketOnOriginRequestFunctionFromFileName,ParameterValue=$stack_name-OnOriginRequest_$latest_on_origin_version_friendly-file ParameterKey=DefaultBucketOnOriginRequestFunctionFromAssociationName,ParameterValue=$stack_name-OnOriginRequest_$latest_on_origin_version_friendly-association  ParameterKey=DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion,ParameterValue=$latest_on_origin_version ParameterKey=DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion,ParameterValue=$latest_on_origin_version" >"$create_path" 2>&1
-
-        if [[ $(cat "$create_path") =~ .*error.* ]]; then
-          cat "$create_path"
-          rm -f "$create_path"
-          exit
-        fi
-
-        attempts=$((attempts - 1))
-        sleep 15
-        main
-        exit
+    local detect_response
+    local detection_status
+    local flag=true # simulate do-while loop
+    while $flag || [ 'DETECTION_IN_PROGRESS' == "$detection_status" ]; do
+      if ! $flag; then
+        echo 'drift being detected, sleeping for 5 seconds...'
+        sleep 5
       fi
-      echo 'stack is done rolling back or some other thing happened...'
-      echo 'impossible' >"$drift_path"
-      main
-      exit
-    elif [[ ! $drift_response =~ ^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$ ]]; then
-      rm -f "$drift_path"
-      echo "$drift_response"
+      flag=false
+      detect_response=$(aws cloudformation describe-stack-drift-detection-status \
+        --stack-drift-detection-id "$detection_id" \
+        --profile "$profile" \
+        --region "$region" 2>&1)
+      detection_status="$(jq -r '.DetectionStatus' <<<"$detect_response")"
+    done
+    if [ 'DETECTION_COMPLETE' != "$detection_status" ]; then
+      jq <<<"$detect_response"
+      echo 'something went wrong ^^'
       exit
     fi
 
-    attempts=$((attempts - 1))
-    sleep 3
-    main
-    exit
-  else
-    local drift && drift="$(cat "$drift_path")"
-    if [ 'impossible' == "$drift" ]; then
-      rm -f "$drift_path"
-      echo 'impossible to detect drift, ride or die...'
+    drift_status="$(jq -r '.StackDriftStatus' <<<"$detect_response")"
+    if [ 'IN_SYNC' != "$drift_status" ]; then
+      while true; do
+        read -r -p "stack is not in sync, has status [$drift_status]. continue deploying? (y/N): " answer
+        case "$answer" in
+        Y | y)
+          break
+          ;;
+        *)
+          exit
+          ;;
+        esac
+      done
     else
-      drift_detection_status=$(eval "aws cloudformation describe-stack-drift-detection-status \
-      --stack-drift-detection-id $drift \
-      $default_aws_arguments")
-
-      if [ 'DETECTION_COMPLETE' != "$(echo "$drift_detection_status" | jq -r '.DetectionStatus')" ]; then
-        echo 'detecting drift, sleeping for 3 seconds...'
-        attempts=$((attempts - 1))
-        sleep 3
-        main
-        exit
-      fi
-      drift_detection_status="$(echo "$drift_detection_status" | jq -r '.StackDriftStatus')"
-      if [ 'IN_SYNC' == "$drift_detection_status" ]; then
-        echo 'stack is in sync...'
-        rm -f "$drift_path"
-      else
-        while true; do
-          read -r -p "stack is not in sync, has status [$drift_detection_status]. continue deploying? (y/N): " answer
-          case "$answer" in
-          Y | y)
-            rm -f "$drift_path"
-            break
-            ;;
-          *)
-            exit
-            ;;
-          esac
-        done
-      fi
+      echo 'stack is in sync...'
     fi
   fi
 
   local parameter_overrides=()
 
-  local need_to_upload=false
-  local objects=(
-    "$account_id-$stack_name-lambda-function:$(snake_to_kabob "$latest_on_origin")/$latest_on_origin_version/index.js.zip"
-    "$account_id-$stack_name-lambda-function:$(snake_to_kabob "$latest_on_create")/$latest_on_create_version/index.js.zip"
+  # local need_to_upload=false
+  local -r keys=(
+    "$(snake_to_kabob "$latest_on_origin")/$latest_on_origin_version/index.js.zip"
+    "$(snake_to_kabob "$latest_on_create")/$latest_on_create_version/index.js.zip"
   )
-  local bucket_key
-  if [ -f "$head_object_path" ]; then
-    rm -f "$head_object_path"
-    touch "$head_object_path"
-  fi
-  local head_object_response
-  for object in "${objects[@]}"; do
-    bucket_key=($(echo "$object" | tr ':' ' '))
-    bucket=${bucket_key[0]}
-    key=${bucket_key[1]}
-    aws s3api head-object --bucket "$bucket" --key "$key" --profile "$profile" >"$head_object_path" 2>&1
-    head_object_response=$(cat "$head_object_path")
-    _regex='Not Found$'
-    echo "$head_object_response"
-    echo "$key"
-    echo "$object"
-    if [[ "$head_object_response" =~ $_regex ]]; then
-      rm -f "$head_object_path"
-      need_to_upload=true
+  for key in "${keys[@]}"; do
+    head_object_response=$(aws s3api head-object --bucket "$account_id-$stack_name-lambda-function" --key "$key" --profile "$profile" 2>&1 | sed '/^$/d')
+    if [ "$head_object_response" == 'An error occurred (404) when calling the HeadObject operation: Not Found' ]; then
+      upload_lambda_functions
       break
-    elif [ '' != "$head_object_response" ] && [ 'binary/octet-stream' != "$(echo "$head_object_response" | jq -r '.ContentType')" ]; then
-      rm -f "$head_object_path"
-      echo "$head_object_response" | cat
-      echo "$bucket"
-      echo "$key"
-      exit
     fi
   done
-
-  if $need_to_upload; then
-    rm -f "$head_object_path"
-    upload_lambda_functions
-    main
-    exit
-  fi
-  rm -f "$head_object_path"
-  parameter_overrides+=("DefaultBucketOnCreateObjectFunctionSemanticVersion=$latest_on_create_version")
   echo 'latest lambdas are in the bucket...'
 
   local distribution_id
@@ -433,15 +434,13 @@ main() {
   local -r long_name=$(kabob_to_pascal "$latest_on_origin")
   local -r short_name="${long_name/DefaultBucket/}"
 
-  if [ '' == "$distribution_id" ]; then
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromFileName=$stack_name-${short_name}_$latest_on_origin_version_friendly-file")
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion=$latest_on_origin_version")
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationName=$stack_name-${short_name}_$latest_on_origin_version_friendly-association")
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion=$latest_on_origin_version")
-    deploy_stack "${parameter_overrides[@]}"
-    echo 'todo: check if previous deploy was successful before doing this next deploy'
-    deploy_stack "${parameter_overrides[@]}"
-    exit
+  if [ -z "$distribution_id" ]; then
+    deploy_stack_response=$(deploy_stack_new $parameters)
+    if [ "$(echo "$deploy_stack_response" | tail -n1)" != "Successfully created/updated stack - $stack_name" ]; then
+      echo "$deploy_stack_response"
+      echo 'something went wrong ^^'
+      exit
+    fi
   fi
 
   local -r associations=$(aws cloudfront get-distribution-config --id "$distribution_id" --profile "$profile" --query="DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations")
@@ -451,6 +450,7 @@ main() {
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion=$latest_on_origin_version")
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationName=$stack_name-${short_name}_$latest_on_origin_version_friendly-association")
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion=$latest_on_origin_version")
+    echo 'here 2'
     deploy_stack "${parameter_overrides[@]}"
     echo 'should deploy again here 2?'
     exit
@@ -465,6 +465,7 @@ main() {
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion=$latest_on_origin_version")
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationName=$stack_name-${short_name}_$latest_on_origin_version_friendly-association")
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion=$latest_on_origin_version")
+    echo 'here 3'
     deploy_stack "${parameter_overrides[@]}"
     echo 'should deploy again here? 3'
     exit
