@@ -117,8 +117,6 @@ create_deploy_template() {
 }
 
 deploy_stack() {
-  echo 'wrong'
-  exit
   local parameter_overrides=("$@")
   local deploy_template && deploy_template=$(create_deploy_template "${parameter_overrides[@]}")
 
@@ -169,6 +167,7 @@ deploy_stack() {
 }
 
 deploy_stack_new() {
+  echo "fn: ${FUNCNAME[0]}..."
   local parameters=$1
 
   on_create_arn=$(get_function_arn 'DefaultBucketOnCreateObjectFunction')
@@ -176,8 +175,6 @@ deploy_stack_new() {
     parameters=$(jq --arg arn "$on_create_arn" '.DefaultBucketOnCreateObjectFunctionArn = $arn' <<<"$parameters")
   fi
   parameters=$(jq '.IsCreate = false' <<<"$parameters")
-
-  echo "$(for_update "$parameters")"
 
   local -r deploy_response=$(eval "aws cloudformation deploy \
     --region $region \
@@ -187,16 +184,15 @@ deploy_stack_new() {
     --template-file $(create_deploy_template) \
     --parameter-overrides $(for_update "$parameters")" 2>&1 | sed '/^$/d')
 
-  # aws cloudformation deploy \
-  #   --region "$region" \
-  #   --profile "$profile" \
-  #   --stack-name "$stack_name" \
-  #   --capabilities CAPABILITY_IAM \
-  #   --template-file "$(create_deploy_template)" \
-  #   --parameter-overrides "$(for_update "$parameters")" | jq
-
-  set_config
-  echo "$deploy_response"
+  echo ''
+  if [ "Successfully created/updated stack - $stack_name" == "$(tail -n1 <<<"$deploy_response")" ]; then
+    set_config
+  elif [ "No changes to deploy. Stack $stack_name is up to date" != "$(tail -n1 <<<"$deploy_response")" ]; then
+    echo "$deploy_response"
+    echo 'something went wrong ^^'
+    exit
+  fi
+  return 0
 }
 
 get_latest_version() {
@@ -213,7 +209,7 @@ get_latest_version() {
 }
 
 create_stack() {
-  echo 'creating stack...'
+  echo "fn: ${FUNCNAME[0]}"
   eval "aws cloudformation create-stack \
     --stack-name $stack_name \
     --template-body file://$(create_deploy_template) \
@@ -435,41 +431,40 @@ main() {
   local -r short_name="${long_name/DefaultBucket/}"
 
   if [ -z "$distribution_id" ]; then
-    deploy_stack_response=$(deploy_stack_new $parameters)
-    if [ "$(echo "$deploy_stack_response" | tail -n1)" != "Successfully created/updated stack - $stack_name" ]; then
-      echo "$deploy_stack_response"
-      echo 'something went wrong ^^'
+    if ! deploy_stack_new "$parameters"; then
+      exit
+    fi
+    # deploy_stack_response=$(deploy_stack_new $parameters)
+    # if [ "$(echo "$deploy_stack_response" | tail -n1)" != "Successfully created/updated stack - $stack_name" ]; then
+    #   echo "$deploy_stack_response"
+    #   echo 'something went wrong ^^'
+    #   exit
+    # fi
+  fi
+
+  local -r associations=$(eval "aws cloudfront get-distribution-config \
+    --id $distribution_id \
+    --profile $profile \
+    --query=\"DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations\"" 2>&1 | sed '/^$/d')
+
+  # local -r associations=$(aws cloudfront get-distribution-config --id "$distribution_id" --profile "$profile" --query="DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations")
+  if [[ ! "$(jq '.Quantity' <<<"$associations")" =~ ^[1-9][0-9]*$ ]]; then
+    if ! deploy_stack_new "$parameters"; then
       exit
     fi
   fi
 
-  local -r associations=$(aws cloudfront get-distribution-config --id "$distribution_id" --profile "$profile" --query="DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations")
-  if [ '0' == "$(echo "$associations" | jq '.Quantity')" ]; then
-    echo 'no associations found...'
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromFileName=$stack_name-${short_name}_$latest_on_origin_version_friendly-file")
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion=$latest_on_origin_version")
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationName=$stack_name-${short_name}_$latest_on_origin_version_friendly-association")
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion=$latest_on_origin_version")
-    echo 'here 2'
-    deploy_stack "${parameter_overrides[@]}"
-    echo 'should deploy again here 2?'
-    exit
-  fi
-
   echo 'associations found...'
 
-  origin_request_lambda_association=$(echo "$associations" | jq '.Items[] | select(.EventType=="origin-request")')
-  if [ '' == "$origin_request_lambda_association" ]; then
-    echo 'no origin-request associations found...'
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromFileName=$stack_name-${short_name}_$latest_on_origin_version_friendly-file")
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion=$latest_on_origin_version")
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationName=$stack_name-${short_name}_$latest_on_origin_version_friendly-association")
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion=$latest_on_origin_version")
-    echo 'here 3'
-    deploy_stack "${parameter_overrides[@]}"
-    echo 'should deploy again here? 3'
-    exit
+  origin_request_lambda_association=$(jq '.Items[] | select(.EventType=="origin-request")' <<<"$associations")
+  if [ -z "$origin_request_lambda_association" ]; then
+    if ! deploy_stack_new "$parameters"; then
+      exit
+    fi
   fi
+
+  echo 'there is an origin request association already...'
+  # exit
 
   # [v2,v1]
   # INVALID - v1-0 not ready to be deleted yet, refuse to deploy
@@ -479,26 +474,18 @@ main() {
   version=$(echo "$version" | sed -E 's/:[0-9]+$//')
   version="${version//-/.}"
   version=$(echo "$version" | sed 's/\.\(file\|association\)$//')
-  # version="${version//.association/}"
-  # version="${version//.file/}"
-  SemanticVersionFromDistro="$version"
-  echo "SemanticVersionFromDistro $SemanticVersionFromDistro"
-  if [ "$SemanticVersionFromDistro" == "$latest_on_origin_version" ]; then
-    echo 'latest and associated are equal...'
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromFileName=$stack_name-${short_name}_$latest_on_origin_version_friendly-file")
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion=$latest_on_origin_version")
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationName=$stack_name-${short_name}_$latest_on_origin_version_friendly-association")
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion=$latest_on_origin_version")
-    parameter_overrides+=('ShouldUseFunctionFromAssociation=true')
-    echo 'set ShouldUseFunctionFromAssociation to true'
-    deploy_stack "${parameter_overrides[@]}"
-    # echo 'nothing association related to do but ofc still need to deploy for normals stuff'
+  distro_version="$version"
+  if [ "$distro_version" == "$latest_on_origin_version" ]; then
+    parameters=$(jq '.ShouldUseFunctionFromAssociation = true' <<<"$parameters")
+    deploy_stack_new "$parameters"
     exit
   fi
 
-  high_version=$(highest_version "$SemanticVersionFromDistro" "$latest_on_origin_version")
-  if [ "$high_version" == "$SemanticVersionFromDistro" ]; then
-    echo "distro is associated with version '$SemanticVersionFromDistro', local version is '$latest_on_origin_version'. refusing to update distro with lower version..."
+  echo 'latest and associated are not equal...'
+  exit
+
+  if [ "$distro_version" == "$(highest_version "$distro_version" "$latest_on_origin_version")" ]; then
+    echo "distro is associated with version '$distro_version', local version is '$latest_on_origin_version'. refusing to update stack with lower version..."
     exit
   fi
 
@@ -512,7 +499,7 @@ main() {
     associated_lambda_name=${origin_request_lambda_function_arn/$prefix/}
     associated_lambda_name=$(echo "$associated_lambda_name" | sed 's/:[[:digit:]]\+//')
     parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationName=$associated_lambda_name")
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion=$SemanticVersionFromDistro")
+    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion=$distro_version")
     deploy_stack "${parameter_overrides[@]}"
     echo 'should deploy again here? 5'
     echo 'after checking for errors, should deploy again immediately? do you really need to go through the whole flow again to get into the else for this if?'
