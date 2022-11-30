@@ -1,5 +1,15 @@
 #! /bin/bash
 
+if ! [ -x "$(command -v jq)" ]; then
+  echo 'exiting early: jq not installed'
+  exit
+fi
+
+if ! [ -x "$(command -v yq)" ]; then
+  echo 'exiting early: yq not installed'
+  exit
+fi
+
 if [ -z "$1" ]; then
   readonly stack='abr'
 fi

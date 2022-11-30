@@ -1,10 +1,6 @@
 #! /bin/bash
 
-attempts=0
-readonly max_attempts=1
 # (us(-gov)?|af|ap|ca|eu|me|sa)-(north|east|south|west|central)+-\d+
-last_good_parameter_overrides=()
-default_aws_arguments=
 region=
 profile=
 dry_run=false # todo: danger, sort of. looks like its gonna get stuck in a loop
@@ -16,10 +12,6 @@ account_id=
 here="$(dirname "$(realpath "$0")")"
 readonly here
 readonly template="$here/infra.yaml"
-readonly drift_path="$here/.$stack-drift"
-readonly create_path="$here/.$stack-create"
-readonly head_object_path="$here/.$stack-head-object"
-readonly get_function_path="$here/.$stack-get-function"
 
 display_help() {
   echo "
@@ -116,65 +108,17 @@ create_deploy_template() {
   echo "$deploy_template"
 }
 
-deploy_stack() {
-  local parameter_overrides=("$@")
-  local deploy_template && deploy_template=$(create_deploy_template "${parameter_overrides[@]}")
-
-  parameter_overrides+=("DefaultBucketOnCreateObjectFunctionArn=$(get_function_arn 'DefaultBucketOnCreateObjectFunction')")
-  parameter_overrides+=('IsCreate=false')
-  parameter_overrides_option="--parameter-overrides ${parameter_overrides[*]}"
-
-  for override in "${parameter_overrides[@]}"; do
-    echo "about to deploy with override: $override"
-  done
-  exit
-  local deploy_command="aws cloudformation deploy \
-    --template-file $deploy_template  \
-    --stack-name $stack_name \
-    --capabilities CAPABILITY_IAM \
-    $parameter_overrides_option \
-    $default_aws_arguments"
-
-  echo 'deploying...'
-  local deploy_output && deploy_output=$(eval "$deploy_command")
-  rm "$deploy_template"
-  local label="$deploy_command"
-  if $dry_run; then
-    label="[dry run] $label"
-  fi
-  echo "$deploy_output"
-
-  local ultimate_line && ultimate_line=$(echo "$deploy_output" | tail -n1)
-
-  if [[ ! "$ultimate_line" =~ ^aws\scloudformation\sdescribe-change-set ]]; then
-    return
-  fi
-  last_good_parameter_overrides=parameter_overrides
-  set_config
-
-  # if $dry_run; then
-  #   local describe_command="$ultimate_line $default_aws_arguments"
-  #   local describe_output && describe_output=$(eval "$describe_command")
-  #   label=describe_command
-  #   if $dry_run; then
-  #     label="[dry run] $label"
-  #   fi
-  #   echo "$describe_output"
-  #   return
-  # fi
-
-  # set_config
-}
-
 deploy_stack_new() {
-  echo "fn: ${FUNCNAME[0]}..."
   local parameters=$1
+  echo "$parameters"
 
   on_create_arn=$(get_function_arn 'DefaultBucketOnCreateObjectFunction')
   if [ -n "$on_create_arn" ]; then
     parameters=$(jq --arg arn "$on_create_arn" '.DefaultBucketOnCreateObjectFunctionArn = $arn' <<<"$parameters")
+    echo "$parameters"
   fi
   parameters=$(jq '.IsCreate = false' <<<"$parameters")
+  echo "$parameters"
 
   local -r deploy_response=$(eval "aws cloudformation deploy \
     --region $region \
@@ -183,8 +127,9 @@ deploy_stack_new() {
     --capabilities CAPABILITY_IAM \
     --template-file $(create_deploy_template) \
     --parameter-overrides $(for_update "$parameters")" 2>&1 | sed '/^$/d')
+  echo "$deploy_response"
+  tail -n1 <<<"$deploy_response"
 
-  echo ''
   if [ "Successfully created/updated stack - $stack_name" == "$(tail -n1 <<<"$deploy_response")" ]; then
     set_config
   elif [ "No changes to deploy. Stack $stack_name is up to date" != "$(tail -n1 <<<"$deploy_response")" ]; then
@@ -209,7 +154,6 @@ get_latest_version() {
 }
 
 create_stack() {
-  echo "fn: ${FUNCNAME[0]}"
   eval "aws cloudformation create-stack \
     --stack-name $stack_name \
     --template-body file://$(create_deploy_template) \
@@ -222,10 +166,15 @@ create_stack() {
   local describe_response
   local status
   local flag=true # simulate do-while loop
+  local sleep=30
   while $flag || [ 'CREATE_IN_PROGRESS' == "$status" ]; do
     if ! $flag; then
-      echo 'sleeping for 60 seconds...'
-      sleep 60
+      echo "sleeping for $sleep seconds..."
+      sleep $sleep
+      sleep=$((sleep / 2))
+      if [ $sleep -lt 5 ]; then
+        sleep=10
+      fi
     fi
     flag=false
     describe_response=$(aws cloudformation describe-stacks --stack-name="$stack_name" --profile "$profile" --region="$region" 2>&1 | sed '/^$/d')
@@ -262,9 +211,11 @@ upload_lambda_functions() {
     zip -j -X -q "$zip_path" "$filepath"
     checksum="$(openssl dgst -sha256 -binary "$zip_path" | openssl enc -base64)"
 
-    aws s3api head-object --bucket "$bucket" --key "$key" --checksum-mode ENABLED --profile "$profile" >"$head_object_path" 2>&1
-    sed -i '/^$/d' "$head_object_path"
-    head_object_response=$(cat "$head_object_path")
+    head_object_response=$(eval "aws s3api head-object \
+      --bucket $bucket \
+      --key $key \
+      --checksum-mode ENABLED \
+      --profile $profile" 2>&1 | sed '/^$/d')
     if [ 'An error occurred (404) when calling the HeadObject operation: Not Found' == "$head_object_response" ]; then
       aws s3api put-object \
         --bucket "$bucket" \
@@ -274,10 +225,11 @@ upload_lambda_functions() {
         --profile "$profile" >>/dev/null
       echo "uploaded $key to s3://$bucket/$key with sha256 checksum $checksum"
       rm -f "$zip_path"
-    elif [ "$checksum" == "$(jq -r '.ChecksumSHA256' "$head_object_path")" ]; then
+    elif [ "$checksum" == "$(jq -r '.ChecksumSHA256' <<<"$head_object_response")" ]; then
       rm -f "$zip_path"
       continue
     else
+      rm -f "$zip_path"
       echo "$head_object_response"
       echo "local/s3 checksums do not match for $key, check the response above"
       exit
@@ -306,37 +258,45 @@ for_update() {
   echo "$overrides"
 }
 
+highest_version() {
+  local -r version_a="$1"
+  echo "version_a $version_a"
+  local -r version_b="$2"
+  echo "version_b $version_b"
+  if [ "$version_a" == "$version_b" ]; then
+    echo "versions are the same, chucklehead..." >&2
+    exit
+  fi
+
+  local a=${version_a/v/}
+  a=${a//./ }
+  read -r -a version_a_as_array <<<"$a"
+
+  local b=${version_b/v/}
+  b=${b//./ }
+  read -r -a version_b_as_array <<<"$b"
+
+  local highest
+  local length="${#version_a_as_array[@]}"
+  for ((i = 0; i <= length; i++)); do
+    if [ "${version_a_as_array[$i]}" -eq "${version_b_as_array[$i]}" ]; then
+      continue
+    elif [ "${version_a_as_array[$i]}" -gt "${version_b_as_array[$i]}" ]; then
+      highest="$version_a"
+      break
+    else
+      highest="$version_b"
+      break
+    fi
+  done
+  echo "$highest"
+}
+
 main() {
-  if ! [ -x "$(command -v jq)" ]; then
-    echo 'exiting early: jq not installed'
-    exit
-  fi
-
-  if ! [ -x "$(command -v yq)" ]; then
-    echo 'exiting early: yq not installed'
-    exit
-  fi
-
-  # shellcheck source=/dev/null
-  source "$here/shared.bash" "$stack"
-
-  attempts=$((attempts + 1))
-  if [ $attempts -gt $max_attempts ]; then
-    for path in $drift_path $create_path $head_object_path; do
-      if [ -f "$path" ]; then
-        rm -f "$path"
-      fi
-    done
-    echo "exceeded $max_attempts attempts, bailing out..."
-    exit
-  fi
-  echo "attempts: $attempts"
-
-  local -r latest_on_create='default-bucket-on-create-object'
   local -r latest_on_origin='default-bucket-on-origin-request'
-  local -r latest_on_create_version=$(get_latest_version "$latest_on_create")
   local -r latest_on_origin_version=$(get_latest_version "$latest_on_origin")
   local -r latest_on_origin_version_friendly="${latest_on_origin_version//./-}"
+  local -r latest_on_origin_prefix="$stack_name-OnOriginRequest_$latest_on_origin_version_friendly"
 
   local parameters
   parameters='{'
@@ -344,9 +304,9 @@ main() {
   parameters+=','
   parameters+="\"DefaultBucketOnCreateObjectFunctionSemanticVersion\":\"$(get_latest_version 'default-bucket-on-create-object')\""
   parameters+=','
-  parameters+="\"DefaultBucketOnOriginRequestFunctionFromFileName\":\"$stack_name-OnOriginRequest_$latest_on_origin_version_friendly-file\""
+  parameters+="\"DefaultBucketOnOriginRequestFunctionFromFileName\":\"$latest_on_origin_prefix-file\""
   parameters+=','
-  parameters+="\"DefaultBucketOnOriginRequestFunctionFromAssociationName\":\"$stack_name-OnOriginRequest_$latest_on_origin_version_friendly-association\""
+  parameters+="\"DefaultBucketOnOriginRequestFunctionFromAssociationName\":\"$latest_on_origin_prefix-association\""
   parameters+=','
   parameters+="\"DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion\":\"$latest_on_origin_version\""
   parameters+=','
@@ -366,7 +326,7 @@ main() {
       --stack-name $stack_name \
       --output=text \
       --profile $profile \
-      --region $region")
+      --region $region" 2>&1 | sed '/^$/d')
 
     local detect_response
     local detection_status
@@ -407,12 +367,10 @@ main() {
     fi
   fi
 
-  local parameter_overrides=()
-
-  # local need_to_upload=false
+  local -r latest_on_create='default-bucket-on-create-object'
   local -r keys=(
     "$(snake_to_kabob "$latest_on_origin")/$latest_on_origin_version/index.js.zip"
-    "$(snake_to_kabob "$latest_on_create")/$latest_on_create_version/index.js.zip"
+    "$latest_on_create/$(get_latest_version "$latest_on_create")/index.js.zip"
   )
   for key in "${keys[@]}"; do
     head_object_response=$(aws s3api head-object --bucket "$account_id-$stack_name-lambda-function" --key "$key" --profile "$profile" 2>&1 | sed '/^$/d')
@@ -421,141 +379,128 @@ main() {
       break
     fi
   done
-  echo 'latest lambdas are in the bucket...'
 
   local distribution_id
   distribution_id=$(get_distribution_id 'Primary')
-  readonly distribution_id
-
-  local -r long_name=$(kabob_to_pascal "$latest_on_origin")
-  local -r short_name="${long_name/DefaultBucket/}"
 
   if [ -z "$distribution_id" ]; then
+    echo 'deploying to create distribution'
     if ! deploy_stack_new "$parameters"; then
       exit
     fi
-    # deploy_stack_response=$(deploy_stack_new $parameters)
-    # if [ "$(echo "$deploy_stack_response" | tail -n1)" != "Successfully created/updated stack - $stack_name" ]; then
-    #   echo "$deploy_stack_response"
-    #   echo 'something went wrong ^^'
-    #   exit
-    # fi
+    distribution_id=$(get_distribution_id 'Primary')
+    if [ -z "$distribution_id" ]; then
+      echo 'the primary distribution should exist by now, but it doesn'\''t. exiting early...'
+      exit
+    fi
   fi
 
-  local -r associations=$(eval "aws cloudfront get-distribution-config \
-    --id $distribution_id \
-    --profile $profile \
-    --query=\"DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations\"" 2>&1 | sed '/^$/d')
+  local associations && associations=$(aws cloudfront get-distribution-config --id "$distribution_id" --profile "$profile" --query="DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations")
 
-  # local -r associations=$(aws cloudfront get-distribution-config --id "$distribution_id" --profile "$profile" --query="DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations")
+  echo "associations 1: $associations"
   if [[ ! "$(jq '.Quantity' <<<"$associations")" =~ ^[1-9][0-9]*$ ]]; then
+    echo 'deploying because there are no associations'
+    jq '.Quantity' <<<"$associations"
     if ! deploy_stack_new "$parameters"; then
       exit
     fi
   fi
-
-  echo 'associations found...'
 
   origin_request_lambda_association=$(jq '.Items[] | select(.EventType=="origin-request")' <<<"$associations")
   if [ -z "$origin_request_lambda_association" ]; then
+    echo 'deploying because there is no origin request association'
     if ! deploy_stack_new "$parameters"; then
+      exit
+    fi
+    associations=$(aws cloudfront get-distribution-config --id "$distribution_id" --profile "$profile" --query="DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations")
+    origin_request_lambda_association=$(jq '.Items[] | select(.EventType=="origin-request")' <<<"$associations")
+    if [ -z "$origin_request_lambda_association" ]; then
+      echo 'there should be an origin request lambda by now but there isn'\''t. exiting early...'
       exit
     fi
   fi
 
-  echo 'there is an origin request association already...'
-  # exit
-
-  # [v2,v1]
-  # INVALID - v1-0 not ready to be deleted yet, refuse to deploy
-
-  origin_request_lambda_function_arn=$(echo "$origin_request_lambda_association" | jq -r '.LambdaFunctionARN')
-  version="${origin_request_lambda_function_arn##*_}"
-  version=$(echo "$version" | sed -E 's/:[0-9]+$//')
-  version="${version//-/.}"
-  version=$(echo "$version" | sed 's/\.\(file\|association\)$//')
-  distro_version="$version"
+  origin_request_lambda_association_arn=$(jq -r '.LambdaFunctionARN' <<<"$origin_request_lambda_association")
+  distro_version="${origin_request_lambda_association_arn##*_}"
+  distro_version="${distro_version%:*}"
+  distro_version="${distro_version//-/.}"
+  distro_version="${distro_version/.file/}"
+  distro_version="${distro_version/.association/}"
   if [ "$distro_version" == "$latest_on_origin_version" ]; then
+    echo 'deploying because this command should always deploy at least once'
     parameters=$(jq '.ShouldUseFunctionFromAssociation = true' <<<"$parameters")
-    deploy_stack_new "$parameters"
+    if deploy_stack_new "$parameters"; then
+      echo 'done.'
+    fi
     exit
   fi
-
-  echo 'latest and associated are not equal...'
-  exit
 
   if [ "$distro_version" == "$(highest_version "$distro_version" "$latest_on_origin_version")" ]; then
     echo "distro is associated with version '$distro_version', local version is '$latest_on_origin_version'. refusing to update stack with lower version..."
     exit
   fi
 
-  eval "aws lambda get-function --function-name $stack_name-${short_name}_$latest_on_origin_version_friendly-file --region $region --profile $profile" >"$get_function_path" 2>&1
-  get_function_response="$(cat "$get_function_path")"
+  local -r get_function_response=$(eval "aws lambda get-function \
+    --function-name $latest_on_origin_prefix-file \
+    --region $region \
+    --profile $profile" 2>&1 | sed '/^$/d')
+
   if [[ "$get_function_response" =~ .*ResourceNotFoundException.* ]]; then
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromFileName=$stack_name-${short_name}_$latest_on_origin_version_friendly-file")
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion=$latest_on_origin_version")
+    local associated_lambda_name=${origin_request_lambda_association_arn/arn:aws:lambda:$region:$account_id:function:/}
+    associated_lambda_name="${associated_lambda_name%:*}"
 
-    prefix="arn:aws:lambda:$region:$account_id:function:"
-    associated_lambda_name=${origin_request_lambda_function_arn/$prefix/}
-    associated_lambda_name=$(echo "$associated_lambda_name" | sed 's/:[[:digit:]]\+//')
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationName=$associated_lambda_name")
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion=$distro_version")
-    deploy_stack "${parameter_overrides[@]}"
-    echo 'should deploy again here? 5'
-    echo 'after checking for errors, should deploy again immediately? do you really need to go through the whole flow again to get into the else for this if?'
-  else # todo: check for success properly here and in many other places
-    echo 'function already exists'
-    echo "get_function_response: $get_function_response"
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationName=$stack_name-${short_name}_$latest_on_origin_version_friendly-association")
-    parameter_overrides+=("DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion=$latest_on_origin_version")
-    parameter_overrides+=('ShouldUseFunctionFromAssociation=false')
-    deploy_stack "${parameter_overrides[@]}"
-    echo 'should deploy again here? 6'
-    echo 'assuming things went well...'
+    parameters=$(jq --arg name "$latest_on_origin_prefix-file" '.DefaultBucketOnOriginRequestFunctionFromFileName = $name' <<<"$parameters")
+    parameters=$(jq --arg version "$latest_on_origin_version" '.DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion = $version' <<<"$parameters")
+
+    parameters=$(jq --arg name "$associated_lambda_name" '.DefaultBucketOnOriginRequestFunctionFromAssociationName = $name' <<<"$parameters")
+    parameters=$(jq --arg version "$distro_version" '.DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion = $version' <<<"$parameters")
+
+    parameters=$(jq '.ShouldUseFunctionFromAssociation = true' <<<"$parameters")
+
+    echo "deploying to create $latest_on_origin_prefix-file"
+    if ! deploy_stack_new "$parameters"; then
+      exit
+    fi
   fi
-  rm -f "$get_function_path"
-  exit
 
-  # if latest is higher version than associated for ex v2 and v1
-  # deploy with latest v2, associated v1
+  parameters=$(jq --arg name "$latest_on_origin_prefix-file" '.DefaultBucketOnOriginRequestFunctionFromFileName = $name' <<<"$parameters")
+  parameters=$(jq --arg version "$latest_on_origin_version" '.DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion = $version' <<<"$parameters")
 
-  # then deploy and swap so that the distribution associates the one "from the file"
+  parameters=$(jq --arg name "$associated_lambda_name" '.DefaultBucketOnOriginRequestFunctionFromAssociationName = $name' <<<"$parameters")
+  parameters=$(jq --arg version "$distro_version" '.DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion = $version' <<<"$parameters")
 
-  # then deploy with both v2
+  parameters=$(jq '.ShouldUseFunctionFromAssociation = false' <<<"$parameters")
 
-  # improvements: naming, only having 2 when needed
-}
-
-highest_version() {
-  local -r version_a="$1"
-  local -r version_b="$2"
-  if [ "$version_a" == "$version_b" ]; then
-    echo "versions are the same, chucklehead..." >&2
+  echo 'deploy to swap which function is associated'
+  if ! deploy_stack_new "$parameters"; then
     exit
   fi
 
-  local a=${version_a/v/}
-  a=${a//./ }
-  read -r -a version_a_as_array <<<"$a"
+  parameters=$(jq --arg name "$latest_on_origin_prefix-file" '.DefaultBucketOnOriginRequestFunctionFromFileName = $name' <<<"$parameters")
+  parameters=$(jq --arg version "$latest_on_origin_version" '.DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion = $version' <<<"$parameters")
 
-  local b=${version_b/v/}
-  b=${b//./ }
-  read -r -a version_b_as_array <<<"$b"
+  parameters=$(jq --arg name "$latest_on_origin_prefix-association" '.DefaultBucketOnOriginRequestFunctionFromAssociationName = $name' <<<"$parameters")
+  parameters=$(jq --arg version "$latest_on_origin_version" '.DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion = $version' <<<"$parameters")
+  parameters=$(jq '.ShouldUseFunctionFromAssociation = false' <<<"$parameters")
 
-  local highest
-  local length="${#version_a_as_array[@]}"
-  for ((i = 0; i <= length; i++)); do
-    if [ "${version_a_as_array[$i]}" -eq "${version_b_as_array[$i]}" ]; then
-      continue
-    elif [ "${version_a_as_array[$i]}" -gt "${version_b_as_array[$i]}" ]; then
-      highest="$version_a"
-      break
-    else
-      highest="$version_b"
-      break
-    fi
-  done
-  echo "$highest"
+  echo 'deploy to update the unassociated function (the previously associated function will fail to delete but the stack will update successfully)'
+  if ! deploy_stack_new "$parameters"; then
+    exit
+  fi
+
+  parameters=$(jq --arg name "$latest_on_origin_prefix-file" '.DefaultBucketOnOriginRequestFunctionFromFileName = $name' <<<"$parameters")
+  parameters=$(jq --arg version "$latest_on_origin_version" '.DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion = $version' <<<"$parameters")
+
+  parameters=$(jq --arg name "$latest_on_origin_prefix-association" '.DefaultBucketOnOriginRequestFunctionFromAssociationName = $name' <<<"$parameters")
+  parameters=$(jq --arg version "$latest_on_origin_version" '.DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion = $version' <<<"$parameters")
+  parameters=$(jq '.ShouldUseFunctionFromAssociation = true' <<<"$parameters")
+
+  echo 'deploy to get back to baseline'
+  if ! deploy_stack_new "$parameters"; then
+    exit
+  fi
 }
 
+# shellcheck source=/dev/null
+source "$here/shared.bash" "$stack"
 main

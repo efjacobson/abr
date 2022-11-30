@@ -46,14 +46,6 @@ parse_arguments() {
 }
 
 main() {
-  if ! [ -x "$(command -v jq)" ]; then
-    echo 'exiting early: jq not installed'
-    exit
-  fi
-
-  # shellcheck source=/dev/null
-  source "$here/shared.bash" "$stack"
-
   local buckets=()
   if [ 'all' != "$bucket" ]; then
     buckets+=("$account_id-$stack_name-$bucket")
@@ -74,4 +66,6 @@ main() {
 }
 
 parse_arguments "$@"
+# shellcheck source=/dev/null
+source "$here/shared.bash" "$stack"
 main
