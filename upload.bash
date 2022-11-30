@@ -1,6 +1,7 @@
 #! /bin/bash
 
 here="$(dirname "$(realpath "$0")")"
+stack='abr'
 bucket=default
 dry_run=true
 profile=
@@ -10,6 +11,7 @@ display_help() {
 Available options:
   --dry-run     Deploy as a dry run, aka the --dryrun flag
   --hot         Equivalent to --dry-run=false
+  --stack       Defaults to '$stack'
   --bucket      The bucket to upload to
   --help        This message
 "

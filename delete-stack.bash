@@ -32,10 +32,6 @@ parse_arguments() {
 }
 
 main() {
-  while read -r failed; do
-    aws cloudformation delete-stack --stack-name "$failed" --region "$region" --profile "$profile"
-  done < <(aws cloudformation list-stacks --region "$region" --profile "$profile" --stack-status-filter DELETE_FAILED | jq -r '.StackSummaries[] | .StackName')
-
   local -r termination_error=$(aws cloudformation update-termination-protection --no-enable-termination-protection --stack-name "$stack_name" --region "$region" --profile "$profile" 2>&1 1>/dev/null | sed '/^$/d')
   if [ -n "$termination_error" ]; then
     echo "$termination_error"
@@ -51,6 +47,10 @@ main() {
     echo "$delete_error"
     exit
   fi
+
+  while read -r failed; do
+    aws cloudformation delete-stack --stack-name "$failed" --region "$region" --profile "$profile"
+  done < <(aws cloudformation list-stacks --region "$region" --profile "$profile" --stack-status-filter DELETE_FAILED | jq -r '.StackSummaries[] | .StackName')
 }
 
 parse_arguments "$@"

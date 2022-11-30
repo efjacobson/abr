@@ -52,6 +52,7 @@ for opt in "$@"; do
 done
 
 create_deploy_template() {
+  # todo: only need to do this once per script execution, also want to make sure to immediately dupe the original template to prevent unintentional wackiness
   local AWSCloudFrontCloudFrontOriginAccessIdentity_output_GetAtt_fields=('Id' 'S3CanonicalUserId')
   local AWSCloudFrontDistribution_output_GetAtt_fields=('DomainName' 'Id')
   local AWSIAMRole_output_GetAtt_fields=('Arn' 'RoleId')
@@ -108,17 +109,14 @@ create_deploy_template() {
   echo "$deploy_template"
 }
 
-deploy_stack_new() {
+deploy_stack() {
   local parameters=$1
-  echo "$parameters"
 
   on_create_arn=$(get_function_arn 'DefaultBucketOnCreateObjectFunction')
   if [ -n "$on_create_arn" ]; then
     parameters=$(jq --arg arn "$on_create_arn" '.DefaultBucketOnCreateObjectFunctionArn = $arn' <<<"$parameters")
-    echo "$parameters"
   fi
   parameters=$(jq '.IsCreate = false' <<<"$parameters")
-  echo "$parameters"
 
   local -r deploy_response=$(eval "aws cloudformation deploy \
     --region $region \
@@ -128,12 +126,10 @@ deploy_stack_new() {
     --template-file $(create_deploy_template) \
     --parameter-overrides $(for_update "$parameters")" 2>&1 | sed '/^$/d')
   echo "$deploy_response"
-  tail -n1 <<<"$deploy_response"
 
   if [ "Successfully created/updated stack - $stack_name" == "$(tail -n1 <<<"$deploy_response")" ]; then
     set_config
   elif [ "No changes to deploy. Stack $stack_name is up to date" != "$(tail -n1 <<<"$deploy_response")" ]; then
-    echo "$deploy_response"
     echo 'something went wrong ^^'
     exit
   fi
@@ -180,12 +176,11 @@ create_stack() {
     describe_response=$(aws cloudformation describe-stacks --stack-name="$stack_name" --profile "$profile" --region="$region" 2>&1 | sed '/^$/d')
     status=$(jq -r '.Stacks[0].StackStatus' <<<"$describe_response")
   done
+  echo "$describe_response"
   if [ 'CREATE_COMPLETE' != "$status" ]; then
-    jq <<<"$describe_response"
     echo 'something went wrong ^^'
     exit
   fi
-  echo 'stack creation complete...'
   return 0
 }
 
@@ -260,9 +255,7 @@ for_update() {
 
 highest_version() {
   local -r version_a="$1"
-  echo "version_a $version_a"
   local -r version_b="$2"
-  echo "version_b $version_b"
   if [ "$version_a" == "$version_b" ]; then
     echo "versions are the same, chucklehead..." >&2
     exit
@@ -344,7 +337,7 @@ main() {
       detection_status="$(jq -r '.DetectionStatus' <<<"$detect_response")"
     done
     if [ 'DETECTION_COMPLETE' != "$detection_status" ]; then
-      jq <<<"$detect_response"
+      echo "$detect_response"
       echo 'something went wrong ^^'
       exit
     fi
@@ -362,8 +355,6 @@ main() {
           ;;
         esac
       done
-    else
-      echo 'stack is in sync...'
     fi
   fi
 
@@ -385,7 +376,7 @@ main() {
 
   if [ -z "$distribution_id" ]; then
     echo 'deploying to create distribution'
-    if ! deploy_stack_new "$parameters"; then
+    if ! deploy_stack "$parameters"; then
       exit
     fi
     distribution_id=$(get_distribution_id 'Primary')
@@ -397,11 +388,9 @@ main() {
 
   local associations && associations=$(aws cloudfront get-distribution-config --id "$distribution_id" --profile "$profile" --query="DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations")
 
-  echo "associations 1: $associations"
   if [[ ! "$(jq '.Quantity' <<<"$associations")" =~ ^[1-9][0-9]*$ ]]; then
     echo 'deploying because there are no associations'
-    jq '.Quantity' <<<"$associations"
-    if ! deploy_stack_new "$parameters"; then
+    if ! deploy_stack "$parameters"; then
       exit
     fi
   fi
@@ -409,7 +398,7 @@ main() {
   origin_request_lambda_association=$(jq '.Items[] | select(.EventType=="origin-request")' <<<"$associations")
   if [ -z "$origin_request_lambda_association" ]; then
     echo 'deploying because there is no origin request association'
-    if ! deploy_stack_new "$parameters"; then
+    if ! deploy_stack "$parameters"; then
       exit
     fi
     associations=$(aws cloudfront get-distribution-config --id "$distribution_id" --profile "$profile" --query="DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations")
@@ -429,7 +418,7 @@ main() {
   if [ "$distro_version" == "$latest_on_origin_version" ]; then
     echo 'deploying because this command should always deploy at least once'
     parameters=$(jq '.ShouldUseFunctionFromAssociation = true' <<<"$parameters")
-    if deploy_stack_new "$parameters"; then
+    if deploy_stack "$parameters"; then
       echo 'done.'
     fi
     exit
@@ -458,7 +447,7 @@ main() {
     parameters=$(jq '.ShouldUseFunctionFromAssociation = true' <<<"$parameters")
 
     echo "deploying to create $latest_on_origin_prefix-file"
-    if ! deploy_stack_new "$parameters"; then
+    if ! deploy_stack "$parameters"; then
       exit
     fi
   fi
@@ -472,7 +461,7 @@ main() {
   parameters=$(jq '.ShouldUseFunctionFromAssociation = false' <<<"$parameters")
 
   echo 'deploy to swap which function is associated'
-  if ! deploy_stack_new "$parameters"; then
+  if ! deploy_stack "$parameters"; then
     exit
   fi
 
@@ -484,7 +473,7 @@ main() {
   parameters=$(jq '.ShouldUseFunctionFromAssociation = false' <<<"$parameters")
 
   echo 'deploy to update the unassociated function (the previously associated function will fail to delete but the stack will update successfully)'
-  if ! deploy_stack_new "$parameters"; then
+  if ! deploy_stack "$parameters"; then
     exit
   fi
 
@@ -496,7 +485,7 @@ main() {
   parameters=$(jq '.ShouldUseFunctionFromAssociation = true' <<<"$parameters")
 
   echo 'deploy to get back to baseline'
-  if ! deploy_stack_new "$parameters"; then
+  if ! deploy_stack "$parameters"; then
     exit
   fi
 }

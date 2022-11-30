@@ -110,11 +110,11 @@ Resources:
         - !Ref 'AWS::NoValue'
         - LambdaConfigurations:
           - Event: s3:ObjectCreated:*
-            Filter:
-              S3Key:
-                Rules:
-                  - Name: prefix
-                    Value: image
+            # Filter:
+            #   S3Key:
+            #     Rules:
+            #       - Name: prefix
+            #         Value: image
             Function: !Ref DefaultBucketOnCreateObjectFunctionArn
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
@@ -212,8 +212,10 @@ Resources:
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
   DefaultBucketOnOriginRequestFunctionFromFile:
-    Condition: CreateLambdas
     Type: AWS::Lambda::Function
+    Condition: CreateLambdas
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       FunctionName: !Ref DefaultBucketOnOriginRequestFunctionFromFileName
       Handler: index.handler
@@ -226,8 +228,10 @@ Resources:
           - Version: !Ref DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion
 
   DefaultBucketOnOriginRequestFunctionFromFileVersion:
-    Condition: CreateLambdas
     Type: AWS::Lambda::Version
+    Condition: CreateLambdas
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Description: !Ref DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion
       FunctionName: !GetAtt DefaultBucketOnOriginRequestFunctionFromFile.Arn
@@ -235,8 +239,10 @@ Resources:
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
   DefaultBucketOnOriginRequestFunctionFromAssociation:
-    Condition: CreateLambdas
     Type: AWS::Lambda::Function
+    Condition: CreateLambdas
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       FunctionName: !Ref DefaultBucketOnOriginRequestFunctionFromAssociationName
       Handler: index.handler
@@ -249,8 +255,10 @@ Resources:
           - Version: !Ref DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion
 
   DefaultBucketOnOriginRequestFunctionFromAssociationVersion:
-    Condition: CreateLambdas
     Type: AWS::Lambda::Version
+    Condition: CreateLambdas
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Description: !Ref DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion
       FunctionName: !GetAtt DefaultBucketOnOriginRequestFunctionFromAssociation.Arn
@@ -276,28 +284,29 @@ Resources:
         #     Version: 2012-10-17
         #     Statement:
         #       - Effect: Allow
-        #         Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnOriginRequestFunction:*"
+        #         Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda//aws/lambda/${AWS::StackName}-OnOriginRequest_v*"
         #         Action:
         #           - logs:CreateLogGroup
-        # - PolicyName: LogStreamAccess
-        #   PolicyDocument:
-        #     Version: 2012-10-17
-        #     Statement:
-        #       - Effect: Allow
-        #         Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnOriginRequestFunction:*"
-        #         Action:
-        #           - logs:CreateLogStream
-        #           - logs:PutLogEvents
         - PolicyName: LogsAccess
           PolicyDocument:
             Version: 2012-10-17
             Statement:
               - Effect: Allow
-                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnOriginRequestFunction*:*"
+                Resource: '*'
                 Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
+        # - PolicyName: LogsAccess
+        #   PolicyDocument:
+        #     Version: 2012-10-17
+        #     Statement:
+        #       - Effect: Allow
+        #         Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda//aws/lambda/${AWS::StackName}-OnOriginRequest_v*"
+        #         Action:
+        #           - logs:CreateLogGroup
+        #           - logs:CreateLogStream
+        #           - logs:PutLogEvents
 
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
@@ -350,7 +359,7 @@ Resources:
             Version: 2012-10-17
             Statement:
               - Effect: Allow
-                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnCreateObjectFunction*:*"
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnCreateObjectFunction*"
                 Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
