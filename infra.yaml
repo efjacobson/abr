@@ -5,7 +5,7 @@ Description: an aerosol consisting of a visible mass of miniature liquid droplet
 
 
 Parameters:
-  IsCreate:
+  IsFirstRun:
     Default: 'false'
     Type: String
     AllowedValues:
@@ -14,6 +14,13 @@ Parameters:
 
   ShouldUseFunctionFromAssociation:
     Default: 'true'
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  PrimaryDistributionExists:
+    Default: 'false'
     Type: String
     AllowedValues:
       - 'true'
@@ -49,12 +56,13 @@ Parameters:
 ########################################################################
 
 Conditions:
-  CreateLambdas: !Equals
+  IsNotFirstRun: !Equals
     - 'false'
-    - !Ref IsCreate
-  
-  DoNotCreateLambdas: !Not
-    - !Condition CreateLambdas
+    - !Ref IsFirstRun
+
+  CreateOriginAccessControl: !Equals
+    - 'true'
+    - !Ref PrimaryDistributionExists
 
   UseFunctionFromAssociation: !Equals
     - 'true'
@@ -63,9 +71,6 @@ Conditions:
   DefaultBucketOnCreateObjectFunctionArnDoesNotExist: !Equals
     - ''
     - !Ref DefaultBucketOnCreateObjectFunctionArn
-
-  DefaultBucketOnCreateObjectFunctionArnExists: !Not
-    - !Condition DefaultBucketOnCreateObjectFunctionArnDoesNotExist
 
 ########################################################################
 
@@ -92,7 +97,7 @@ Resources:
 
   DefaultBucket:
     Type: AWS::S3::Bucket
-    Condition: CreateLambdas
+    Condition: IsNotFirstRun
     Properties:
       AccessControl: BucketOwnerFullControl
       BucketName: !Sub "${AWS::AccountId}-${AWS::StackName}-default"
@@ -124,7 +129,7 @@ Resources:
 
   DefaultBucketPolicy:
     Type: AWS::S3::BucketPolicy
-    Condition: CreateLambdas
+    Condition: IsNotFirstRun
     Properties:
       Bucket: !Ref DefaultBucket
       PolicyDocument:
@@ -148,7 +153,7 @@ Resources:
 
   PrimaryDistribution:
     Type: AWS::CloudFront::Distribution
-    Condition: CreateLambdas
+    Condition: IsNotFirstRun
     Properties:
       DistributionConfig:
         Enabled: true
@@ -170,15 +175,6 @@ Resources:
                   - "${FunctionArn}:${Version}"
                   - FunctionArn: !GetAtt DefaultBucketOnOriginRequestFunctionFromFile.Arn
                     Version: !GetAtt DefaultBucketOnOriginRequestFunctionFromFileVersion.Version
-          # LambdaFunctionAssociations: !If
-          #   - DoNotCreateLambdas
-          #   - !Ref 'AWS::NoValue'
-          #   - - EventType: origin-request
-          #       IncludeBody: true
-          #       LambdaFunctionARN: !Sub
-          #           - "${FunctionArn}:${Version}"
-          #           - FunctionArn: !GetAtt DefaultBucketOnOriginRequestFunctionFromAssociation.Arn
-          #             Version: !GetAtt DefaultBucketOnOriginRequestFunctionFromAssociationVersion.Version
         Origins:
           - Id: !Ref DefaultBucket
             S3OriginConfig:
@@ -186,10 +182,14 @@ Resources:
             DomainName: !Sub
               - "${Bucket}.s3.${AWS::Region}.${AWS::URLSuffix}"
               - Bucket: !Ref DefaultBucket
-            OriginAccessControlId: !GetAtt DefaultBucketCloudFrontOriginAccessControl.Id
+            OriginAccessControlId: !If
+              - CreateOriginAccessControl
+              - !GetAtt DefaultBucketCloudFrontOriginAccessControl.Id
+              - !Ref 'AWS::NoValue'
   
   DefaultBucketCloudFrontOriginAccessControl:
     Type: AWS::CloudFront::OriginAccessControl
+    Condition: CreateOriginAccessControl
     Properties: 
       OriginAccessControlConfig:
         Description: Default Origin Access Control
@@ -198,22 +198,11 @@ Resources:
         SigningBehavior: always
         SigningProtocol: sigv4
 
-  # DefaultBucketCloudFrontOriginAccessControl:
-  #   Type: AWS::CloudFront::OriginAccessControl
-  #   Properties:
-  #     OriginAccessControlConfig:
-  #       OriginAccessControlOriginType: s3
-  #       SigningBehavior: always
-  #       SigningProtocol: sigv4
-  #       Name: !Sub
-  #         - "${DefaultBucket}-cloudfront-origin-access-control"
-  #         - DefaultBucket: !Ref 'DefaultBucket'
-
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
   DefaultBucketOnOriginRequestFunctionFromFile:
     Type: AWS::Lambda::Function
-    Condition: CreateLambdas
+    Condition: IsNotFirstRun
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -229,7 +218,7 @@ Resources:
 
   DefaultBucketOnOriginRequestFunctionFromFileVersion:
     Type: AWS::Lambda::Version
-    Condition: CreateLambdas
+    Condition: IsNotFirstRun
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -240,7 +229,7 @@ Resources:
 
   DefaultBucketOnOriginRequestFunctionFromAssociation:
     Type: AWS::Lambda::Function
-    Condition: CreateLambdas
+    Condition: IsNotFirstRun
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -256,7 +245,7 @@ Resources:
 
   DefaultBucketOnOriginRequestFunctionFromAssociationVersion:
     Type: AWS::Lambda::Version
-    Condition: CreateLambdas
+    Condition: IsNotFirstRun
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -267,52 +256,36 @@ Resources:
 
   DefaultBucketOnOriginRequestFunctionRole:
     Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       AssumeRolePolicyDocument:
-        Version: 2012-10-17
+        Version: '2012-10-17'
         Statement:
           - Effect: Allow
-            Action:
-              - sts:AssumeRole
             Principal:
               Service:
-                - lambda.amazonaws.com
                 - edgelambda.amazonaws.com
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
       Policies:
-        # - PolicyName: LogGroupAccess
-        #   PolicyDocument:
-        #     Version: 2012-10-17
-        #     Statement:
-        #       - Effect: Allow
-        #         Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda//aws/lambda/${AWS::StackName}-OnOriginRequest_v*"
-        #         Action:
-        #           - logs:CreateLogGroup
         - PolicyName: LogsAccess
           PolicyDocument:
-            Version: 2012-10-17
+            Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Resource: '*'
                 Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-        # - PolicyName: LogsAccess
-        #   PolicyDocument:
-        #     Version: 2012-10-17
-        #     Statement:
-        #       - Effect: Allow
-        #         Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda//aws/lambda/${AWS::StackName}-OnOriginRequest_v*"
-        #         Action:
-        #           - logs:CreateLogGroup
-        #           - logs:CreateLogStream
-        #           - logs:PutLogEvents
+                Resource: !Sub "arn:${AWS::Partition}:logs:*:${AWS::AccountId}:log-group:/aws/lambda/*.${AWS::StackName}-OnOriginRequest_v*"
 
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
   DefaultBucketOnCreateObjectFunction:
     Type: AWS::Lambda::Function
-    Condition: CreateLambdas
+    Condition: IsNotFirstRun
     Properties:
       FunctionName: !Sub "${AWS::StackName}-DefaultBucketOnCreateObjectFunction"
       Handler: index.handler
@@ -337,23 +310,6 @@ Resources:
               Service:
                 - lambda.amazonaws.com
       Policies:
-        # - PolicyName: LogGroupAccess
-        #   PolicyDocument:
-        #     Version: 2012-10-17
-        #     Statement:
-        #       - Effect: Allow
-        #         Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnCreateObjectFunction:*"
-        #         Action:
-        #           - logs:CreateLogGroup
-        # - PolicyName: LogStreamAccess
-        #   PolicyDocument:
-        #     Version: 2012-10-17
-        #     Statement:
-        #       - Effect: Allow
-        #         Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnCreateObjectFunction:*"
-        #         Action:
-        #           - logs:CreateLogStream
-        #           - logs:PutLogEvents
         - PolicyName: LogsAccess
           PolicyDocument:
             Version: 2012-10-17
@@ -367,7 +323,7 @@ Resources:
 
   DefaultBucketOnCreateObjectFunctionPermission:
     Type: AWS::Lambda::Permission
-    Condition: CreateLambdas
+    Condition: IsNotFirstRun
     Properties:
       Action: 'lambda:InvokeFunction'
       FunctionName: !GetAtt DefaultBucketOnCreateObjectFunction.Arn

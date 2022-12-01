@@ -1,7 +1,6 @@
 #! /bin/bash
 
 bucket='default'
-default_aws_arguments=
 dry_run=true
 profile=
 region=

@@ -116,7 +116,7 @@ deploy_stack() {
   if [ -n "$on_create_arn" ]; then
     parameters=$(jq --arg arn "$on_create_arn" '.DefaultBucketOnCreateObjectFunctionArn = $arn' <<<"$parameters")
   fi
-  parameters=$(jq '.IsCreate = false' <<<"$parameters")
+  parameters=$(jq '.IsFirstRun = false' <<<"$parameters")
 
   local -r deploy_response=$(eval "aws cloudformation deploy \
     --region $region \
@@ -293,7 +293,7 @@ main() {
 
   local parameters
   parameters='{'
-  parameters+='"IsCreate":true'
+  parameters+='"IsFirstRun":true'
   parameters+=','
   parameters+="\"DefaultBucketOnCreateObjectFunctionSemanticVersion\":\"$(get_latest_version 'default-bucket-on-create-object')\""
   parameters+=','
@@ -310,9 +310,26 @@ main() {
     --stack-name="$stack_name" \
     --profile "$profile" \
     --region="$region" 2>&1 | sed '/^$/d')
+  local -r status="$(jq -r '.Stacks[0].StackStatus' <<<"$describe_response")"
   if [ "$describe_response" == "An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id $stack_name does not exist" ]; then
     if ! create_stack "$parameters"; then
       exit
+    fi
+  elif [ 'ROLLBACK_COMPLETE' == "$status" ]; then
+    local -r list_resources_response=$(aws cloudformation describe-stack-resources \
+      --stack-name="$stack_name" \
+      --profile "$profile" \
+      --region="$region" 2>&1 | sed '/^$/d')
+    local -r completed_resources=$(jq -r '.StackResources[] | select(.ResourceStatus|test("^(?!DELETE).+"))' <<<"$list_resources_response")
+    if [ -z "$completed_resources" ]; then
+      echo 'first run failed, deleting...'
+      "$here"/delete-stack.bash --stack="$stack"
+      echo 'creating new stack'
+      if ! create_stack "$parameters"; then
+        exit
+      fi
+    else
+      echo "drift cannot be detected because stack is in state '$status'. ride or die..."
     fi
   else
     local -r detection_id=$(eval "aws cloudformation detect-stack-drift \
@@ -358,13 +375,14 @@ main() {
     fi
   fi
 
+  local -r lambda_bucket="$account_id-$stack_name-lambda-function"
   local -r latest_on_create='default-bucket-on-create-object'
   local -r keys=(
     "$(snake_to_kabob "$latest_on_origin")/$latest_on_origin_version/index.js.zip"
     "$latest_on_create/$(get_latest_version "$latest_on_create")/index.js.zip"
   )
   for key in "${keys[@]}"; do
-    head_object_response=$(aws s3api head-object --bucket "$account_id-$stack_name-lambda-function" --key "$key" --profile "$profile" 2>&1 | sed '/^$/d')
+    head_object_response=$(aws s3api head-object --bucket "$lambda_bucket" --key "$key" --profile "$profile" 2>&1 | sed '/^$/d')
     if [ "$head_object_response" == 'An error occurred (404) when calling the HeadObject operation: Not Found' ]; then
       upload_lambda_functions
       break
@@ -385,6 +403,7 @@ main() {
       exit
     fi
   fi
+  parameters=$(jq '.PrimaryDistributionExists = true' <<<"$parameters")
 
   local associations && associations=$(aws cloudfront get-distribution-config --id "$distribution_id" --profile "$profile" --query="DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations")
 

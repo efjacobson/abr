@@ -35,17 +35,14 @@ main() {
   local -r termination_error=$(aws cloudformation update-termination-protection --no-enable-termination-protection --stack-name "$stack_name" --region "$region" --profile "$profile" 2>&1 1>/dev/null | sed '/^$/d')
   if [ -n "$termination_error" ]; then
     echo "$termination_error"
-    exit
   fi
   local -r empty_error=$("$here"/empty-buckets.bash --bucket=all --stack="$stack" --hot 2>&1 1>/dev/null | sed '/^$/d')
   if [ -n "$empty_error" ]; then
     echo "$empty_error"
-    exit
   fi
   local -r delete_error=$(aws cloudformation delete-stack --stack-name "$stack_name" --region "$region" --profile "$profile" 2>&1 1>/dev/null | sed '/^$/d')
   if [ -n "$delete_error" ]; then
     echo "$delete_error"
-    exit
   fi
 
   while read -r failed; do
