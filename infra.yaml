@@ -12,8 +12,15 @@ Parameters:
       - 'true'
       - 'false'
 
-  ShouldUseFunctionFromAssociation:
-    Default: 'true'
+  UseAuxiliaryOriginRequestEdgeFunction:
+    Default: 'false'
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  UseAuxiliaryOriginResponseEdgeFunction:
+    Default: 'false'
     Type: String
     AllowedValues:
       - 'true'
@@ -26,29 +33,47 @@ Parameters:
       - 'true'
       - 'false'
 
-  DefaultBucketOnCreateObjectFunctionArn:
+  DefaultBucketObjectCreatedFunctionArn:
     Default: ''
     Type: String
-    AllowedPattern: '^(arn:aws:lambda:(us-east-1|us-west-2):\d{12}:function:[A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-DefaultBucketOnCreateObjectFunction)?$'
+    AllowedPattern: '^(arn:aws:lambda:(us-east-1|us-west-2):\d{12}:function:[A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-DefaultBucketObjectCreatedFunction)?$'
 
-  DefaultBucketOnCreateObjectFunctionSemanticVersion:
+  DefaultBucketObjectCreatedFunctionSemanticVersion:
     Type: String
     AllowedPattern: '^(v\d+\.\d+\.\d+)?$'
 
-  DefaultBucketOnOriginRequestFunctionFromFileName:
+  AuxiliaryPrimaryOriginRequestEdgeFunctionName:
     Type: String
-    AllowedPattern: '^([A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-OnOriginRequest_v\d+-\d+-\d+-(file|association))?$'
+    AllowedPattern: '^([A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-OnOriginRequest_v\d+-\d+-\d+-auxiliary)?$'
 
-  DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion:
+  AuxiliaryPrimaryOriginRequestEdgeFunctionSemanticVersion:
     Type: String
     AllowedPattern: '^(v\d+\.\d+\.\d+)?$'
 
-  DefaultBucketOnOriginRequestFunctionFromAssociationName:
+  PrimaryOriginRequestEdgeFunctionName:
     # Default: ''
     Type: String
-    AllowedPattern: '^([A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-OnOriginRequest_v\d+-\d+-\d+-(file|association))?$'
+    AllowedPattern: '^([A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-OnOriginRequest_v\d+-\d+-\d+)?$'
 
-  DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion:
+  PrimaryOriginRequestEdgeFunctionSemanticVersion:
+    # Default: ''
+    Type: String
+    AllowedPattern: '^(v\d+\.\d+\.\d+)?$'
+
+  AuxiliaryPrimaryOriginResponseEdgeFunctionName:
+    Type: String
+    AllowedPattern: '^([A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-OnOriginResponse_v\d+-\d+-\d+-auxiliary)?$'
+
+  AuxiliaryPrimaryOriginResponseEdgeFunctionSemanticVersion:
+    Type: String
+    AllowedPattern: '^(v\d+\.\d+\.\d+)?$'
+
+  PrimaryOriginResponseEdgeFunctionName:
+    # Default: ''
+    Type: String
+    AllowedPattern: '^([A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-OnOriginResponse_v\d+-\d+-\d+)?$'
+
+  PrimaryOriginResponseEdgeFunctionSemanticVersion:
     # Default: ''
     Type: String
     AllowedPattern: '^(v\d+\.\d+\.\d+)?$'
@@ -64,13 +89,17 @@ Conditions:
     - 'true'
     - !Ref PrimaryDistributionExists
 
-  UseFunctionFromAssociation: !Equals
+  DoUseAuxiliaryOriginRequestEdgeFunction: !Equals
     - 'true'
-    - !Ref ShouldUseFunctionFromAssociation
+    - !Ref UseAuxiliaryOriginRequestEdgeFunction
 
-  DefaultBucketOnCreateObjectFunctionArnDoesNotExist: !Equals
+  DoUseAuxiliaryOriginResponseEdgeFunction: !Equals
+    - 'true'
+    - !Ref UseAuxiliaryOriginResponseEdgeFunction
+
+  DefaultBucketObjectCreatedFunctionArnDoesNotExist: !Equals
     - ''
-    - !Ref DefaultBucketOnCreateObjectFunctionArn
+    - !Ref DefaultBucketObjectCreatedFunctionArn
 
 ########################################################################
 
@@ -111,7 +140,7 @@ Resources:
             AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 2
       NotificationConfiguration: !If
-        - DefaultBucketOnCreateObjectFunctionArnDoesNotExist
+        - DefaultBucketObjectCreatedFunctionArnDoesNotExist
         - !Ref 'AWS::NoValue'
         - LambdaConfigurations:
           - Event: s3:ObjectCreated:*
@@ -120,7 +149,7 @@ Resources:
             #     Rules:
             #       - Name: prefix
             #         Value: image
-            Function: !Ref DefaultBucketOnCreateObjectFunctionArn
+            Function: !Ref DefaultBucketObjectCreatedFunctionArn
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -151,6 +180,27 @@ Resources:
   
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
+  PrimaryDistributionCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Condition: IsNotFirstRun
+    Properties:
+      CachePolicyConfig:
+        DefaultTTL: 86400
+        MaxTTL: 31536000
+        MinTTL: 1
+        Name: !Sub "${AWS::StackName}-PrimaryDistributionCachePolicy"
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingGzip: true
+          EnableAcceptEncodingBrotli: true
+          CookiesConfig:
+            CookieBehavior: 'none'
+          HeadersConfig:
+            HeaderBehavior: 'none'
+          QueryStringsConfig:
+            QueryStringBehavior: 'whitelist'
+            QueryStrings:
+              - 'tabletennis'
+
   PrimaryDistribution:
     Type: AWS::CloudFront::Distribution
     Condition: IsNotFirstRun
@@ -158,7 +208,7 @@ Resources:
       DistributionConfig:
         Enabled: true
         DefaultCacheBehavior:
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # CachingOptimized: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-cache-policies.html
+          CachePolicyId: !GetAtt PrimaryDistributionCachePolicy.Id
           Compress: true
           TargetOriginId: !Ref DefaultBucket
           ViewerProtocolPolicy: redirect-to-https
@@ -166,15 +216,26 @@ Resources:
             - EventType: origin-request
               IncludeBody: true
               LambdaFunctionARN: !If
-                - UseFunctionFromAssociation
+                - DoUseAuxiliaryOriginRequestEdgeFunction
                 - !Sub
                   - "${FunctionArn}:${Version}"
-                  - FunctionArn: !GetAtt DefaultBucketOnOriginRequestFunctionFromAssociation.Arn
-                    Version: !GetAtt DefaultBucketOnOriginRequestFunctionFromAssociationVersion.Version
+                  - FunctionArn: !GetAtt AuxiliaryPrimaryOriginRequestEdgeFunction.Arn
+                    Version: !GetAtt AuxiliaryPrimaryOriginRequestEdgeFunctionVersion.Version
                 - !Sub
                   - "${FunctionArn}:${Version}"
-                  - FunctionArn: !GetAtt DefaultBucketOnOriginRequestFunctionFromFile.Arn
-                    Version: !GetAtt DefaultBucketOnOriginRequestFunctionFromFileVersion.Version
+                  - FunctionArn: !GetAtt PrimaryOriginRequestEdgeFunction.Arn
+                    Version: !GetAtt PrimaryOriginRequestEdgeFunctionVersion.Version
+            - EventType: origin-response
+              LambdaFunctionARN: !If
+                - DoUseAuxiliaryOriginResponseEdgeFunction
+                - !Sub
+                  - "${FunctionArn}:${Version}"
+                  - FunctionArn: !GetAtt AuxiliaryPrimaryOriginResponseEdgeFunction.Arn
+                    Version: !GetAtt AuxiliaryPrimaryOriginResponseEdgeFunctionVersion.Version
+                - !Sub
+                  - "${FunctionArn}:${Version}"
+                  - FunctionArn: !GetAtt PrimaryOriginResponseEdgeFunction.Arn
+                    Version: !GetAtt PrimaryOriginResponseEdgeFunctionVersion.Version
         Origins:
           - Id: !Ref DefaultBucket
             S3OriginConfig:
@@ -200,61 +261,115 @@ Resources:
 
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
-  DefaultBucketOnOriginRequestFunctionFromFile:
+  AuxiliaryPrimaryOriginRequestEdgeFunction:
     Type: AWS::Lambda::Function
-    Condition: IsNotFirstRun
+    Condition: DoUseAuxiliaryOriginRequestEdgeFunction
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      FunctionName: !Ref DefaultBucketOnOriginRequestFunctionFromFileName
+      FunctionName: !Ref AuxiliaryPrimaryOriginRequestEdgeFunctionName
       Handler: index.handler
-      Role: !GetAtt DefaultBucketOnOriginRequestFunctionRole.Arn
+      Role: !GetAtt PrimaryOriginRequestEdgeFunctionRole.Arn
       Runtime: nodejs14.x # nodejs16.x
       Code:
         S3Bucket: !Ref LambdaFunctionBucket
         S3Key: !Sub
           - "default-bucket-on-origin-request/${Version}/index.js.zip"
-          - Version: !Ref DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion
+          - Version: !Ref AuxiliaryPrimaryOriginRequestEdgeFunctionSemanticVersion
 
-  DefaultBucketOnOriginRequestFunctionFromFileVersion:
+  AuxiliaryPrimaryOriginRequestEdgeFunctionVersion:
     Type: AWS::Lambda::Version
-    Condition: IsNotFirstRun
+    Condition: DoUseAuxiliaryOriginRequestEdgeFunction
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      Description: !Ref DefaultBucketOnOriginRequestFunctionFromFileSemanticVersion
-      FunctionName: !GetAtt DefaultBucketOnOriginRequestFunctionFromFile.Arn
+      Description: !Ref AuxiliaryPrimaryOriginRequestEdgeFunctionSemanticVersion
+      FunctionName: !GetAtt AuxiliaryPrimaryOriginRequestEdgeFunction.Arn
 
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
-  DefaultBucketOnOriginRequestFunctionFromAssociation:
+  AuxiliaryPrimaryOriginResponseEdgeFunction:
+    Type: AWS::Lambda::Function
+    Condition: DoUseAuxiliaryOriginResponseEdgeFunction
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      FunctionName: !Ref AuxiliaryPrimaryOriginResponseEdgeFunctionName
+      Handler: index.handler
+      Role: !GetAtt PrimaryOriginResponseEdgeFunctionRole.Arn
+      Runtime: nodejs14.x # nodejs16.x
+      Code:
+        S3Bucket: !Ref LambdaFunctionBucket
+        S3Key: !Sub
+          - "default-bucket-on-origin-response/${Version}/index.js.zip"
+          - Version: !Ref AuxiliaryPrimaryOriginResponseEdgeFunctionSemanticVersion
+
+  AuxiliaryPrimaryOriginResponseEdgeFunctionVersion:
+    Type: AWS::Lambda::Version
+    Condition: DoUseAuxiliaryOriginResponseEdgeFunction
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: !Ref AuxiliaryPrimaryOriginResponseEdgeFunctionSemanticVersion
+      FunctionName: !GetAtt AuxiliaryPrimaryOriginResponseEdgeFunction.Arn
+
+  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+  PrimaryOriginRequestEdgeFunction:
     Type: AWS::Lambda::Function
     Condition: IsNotFirstRun
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      FunctionName: !Ref DefaultBucketOnOriginRequestFunctionFromAssociationName
+      FunctionName: !Ref PrimaryOriginRequestEdgeFunctionName
       Handler: index.handler
-      Role: !GetAtt DefaultBucketOnOriginRequestFunctionRole.Arn
+      Role: !GetAtt PrimaryOriginRequestEdgeFunctionRole.Arn
       Runtime: nodejs14.x # nodejs16.x
       Code:
         S3Bucket: !Ref LambdaFunctionBucket
         S3Key: !Sub
           - "default-bucket-on-origin-request/${Version}/index.js.zip"
-          - Version: !Ref DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion
+          - Version: !Ref PrimaryOriginRequestEdgeFunctionSemanticVersion
 
-  DefaultBucketOnOriginRequestFunctionFromAssociationVersion:
+  PrimaryOriginRequestEdgeFunctionVersion:
     Type: AWS::Lambda::Version
     Condition: IsNotFirstRun
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      Description: !Ref DefaultBucketOnOriginRequestFunctionFromAssociationSemanticVersion
-      FunctionName: !GetAtt DefaultBucketOnOriginRequestFunctionFromAssociation.Arn
+      Description: !Ref PrimaryOriginRequestEdgeFunctionSemanticVersion
+      FunctionName: !GetAtt PrimaryOriginRequestEdgeFunction.Arn
 
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
-  DefaultBucketOnOriginRequestFunctionRole:
+  PrimaryOriginResponseEdgeFunction:
+    Type: AWS::Lambda::Function
+    Condition: IsNotFirstRun
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      FunctionName: !Ref PrimaryOriginResponseEdgeFunctionName
+      Handler: index.handler
+      Role: !GetAtt PrimaryOriginResponseEdgeFunctionRole.Arn
+      Runtime: nodejs14.x # nodejs16.x
+      Code:
+        S3Bucket: !Ref LambdaFunctionBucket
+        S3Key: !Sub
+          - "default-bucket-on-origin-response/${Version}/index.js.zip"
+          - Version: !Ref PrimaryOriginResponseEdgeFunctionSemanticVersion
+
+  PrimaryOriginResponseEdgeFunctionVersion:
+    Type: AWS::Lambda::Version
+    Condition: IsNotFirstRun
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: !Ref PrimaryOriginResponseEdgeFunctionSemanticVersion
+      FunctionName: !GetAtt PrimaryOriginResponseEdgeFunction.Arn
+
+  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+  PrimaryOriginRequestEdgeFunctionRole:
     Type: AWS::IAM::Role
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
@@ -283,21 +398,50 @@ Resources:
 
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
-  DefaultBucketOnCreateObjectFunction:
+  PrimaryOriginResponseEdgeFunctionRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - edgelambda.amazonaws.com
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: LogsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:${AWS::Partition}:logs:*:${AWS::AccountId}:log-group:/aws/lambda/*.${AWS::StackName}-OnOriginResponse_v*"
+
+  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+  DefaultBucketObjectCreatedFunction:
     Type: AWS::Lambda::Function
     Condition: IsNotFirstRun
     Properties:
-      FunctionName: !Sub "${AWS::StackName}-DefaultBucketOnCreateObjectFunction"
+      FunctionName: !Sub "${AWS::StackName}-DefaultBucketObjectCreatedFunction"
       Handler: index.handler
-      Role: !GetAtt DefaultBucketOnCreateObjectFunctionRole.Arn
+      Role: !GetAtt DefaultBucketObjectCreatedFunctionRole.Arn
       Runtime: nodejs14.x # nodejs16.x
       Code:
         S3Bucket: !Ref LambdaFunctionBucket
         S3Key: !Sub
           - "default-bucket-on-create-object/${Version}/index.js.zip"
-          - Version: !Ref DefaultBucketOnCreateObjectFunctionSemanticVersion
+          - Version: !Ref DefaultBucketObjectCreatedFunctionSemanticVersion
 
-  DefaultBucketOnCreateObjectFunctionRole:
+  DefaultBucketObjectCreatedFunctionRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -315,18 +459,18 @@ Resources:
             Version: 2012-10-17
             Statement:
               - Effect: Allow
-                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketOnCreateObjectFunction*"
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-DefaultBucketObjectCreatedFunction*"
                 Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
 
-  DefaultBucketOnCreateObjectFunctionPermission:
+  DefaultBucketObjectCreatedFunctionPermission:
     Type: AWS::Lambda::Permission
     Condition: IsNotFirstRun
     Properties:
       Action: 'lambda:InvokeFunction'
-      FunctionName: !GetAtt DefaultBucketOnCreateObjectFunction.Arn
+      FunctionName: !GetAtt DefaultBucketObjectCreatedFunction.Arn
       Principal: s3.amazonaws.com
       SourceAccount: !Ref AWS::AccountId
       SourceArn: !Sub
