@@ -200,6 +200,7 @@ Resources:
             QueryStringBehavior: 'whitelist'
             QueryStrings:
               - 'tabletennis'
+              - 'ping'
 
   PrimaryDistribution:
     Type: AWS::CloudFront::Distribution
