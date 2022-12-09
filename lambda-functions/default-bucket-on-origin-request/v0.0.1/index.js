@@ -1,5 +1,3 @@
-const querystring = require('querystring');
-
 const serialize = (object) => JSON.stringify(object, null, 2);
 
 exports.handler = (event, context, callback) => {
@@ -8,29 +6,15 @@ exports.handler = (event, context, callback) => {
     console.log('context', serialize(context));
 
     const request = event.Records[0].cf.request;
+    const urlSearchParams = new URLSearchParams(request.querystring);
 
-    const params = querystring.parse(request.querystring);
-    console.log('params', params);
-
-    if (params.tabletennis) {
+    if (urlSearchParams.has('ping')) {
         const headerName = 'X-Table-Tennis';
         request.headers[headerName.toLowerCase()] = [{ value: 'ping' }];
-        delete params.tabletennis;
-        request.querystring = querystring.stringify(params);
+        urlSearchParams.delete('ping');
     }
 
-    const testHeaderName = 'X-Abr-Test-Request';
-    request.headers[testHeaderName.toLowerCase()] = [{
-        value: (() => {
-            let token = String(Math.ceil(Math.random() * 1000));
-            while (token.length < 4) {
-                token = `0${token}`;
-            }
-            return token;
-        }
-        )(),
-    }];
-
+    request.querystring = urlSearchParams.toString();
     console.log('request', serialize(request));
     callback(null, request);
 }

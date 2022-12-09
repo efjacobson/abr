@@ -224,10 +224,8 @@ upload_lambda_functions() {
 
     zip_path="$filepath.zip"
     zip -j -X -q "$zip_path" "$filepath"
-    # openssl dgst -sha256 -binary "$zip_path" | openssl enc -base64 >"$dir_name/.checksum"
-    # checksum="$(cat "$dir_name/.checksum")"
-
-    checksum="$(openssl dgst -sha256 -binary "$zip_path" | openssl enc -base64)"
+    openssl dgst -sha256 -binary "$zip_path" | openssl enc -base64 >"$dir_name/.checksum"
+    checksum="$(cat "$dir_name/.checksum")"
 
     head_object_response=$(aws s3api head-object \
       --bucket "$bucket" \
@@ -255,9 +253,9 @@ upload_lambda_functions() {
     fi
   done < <(find "$here/lambda-functions/." -name '*.js')
 
-  # for function in "$here/lambda-functions"/*; do
-  #   cp -r "$function/$(get_latest_version "${function##*/}")" "$function/latest"
-  # done
+  for function in "$here/lambda-functions"/*; do
+    cp -r "$function/$(get_latest_version "${function##*/}")" "$function/latest"
+  done
 }
 
 for_create() {
