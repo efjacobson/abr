@@ -1,19 +1,19 @@
-const serialize = (object) => JSON.stringify(object, null, 2);
+const log = (label, object) => console.log(`${label}:`, JSON.stringify(object, null, 2))
 
 exports.handler = (event, context, callback) => {
-    console.log('process.env', serialize(process.env));
-    console.log('event', serialize(event));
-    console.log('context', serialize(context));
-    console.log('context', serialize(context));
+    log('process.env', process.env);
+    log('event', event);
+    log('context', context);
+    log('event.Records[0].cf.response', event.Records[0].cf.response);
 
     const request = event.Records[0].cf.request;
     const response = event.Records[0].cf.response;
 
-    const tableTennisHeaderName = 'X-Table-Tennis';
-    response.headers[tableTennisHeaderName.toLowerCase()] = [{
-        value: request.headers?.[tableTennisHeaderName.toLowerCase()]?.[0]?.value === 'ping' ? 'pong' : 'ping',
+    const headerName = 'X-Table-Tennis';
+    response.headers[headerName.toLowerCase()] = [{
+        value: request.headers?.[headerName.toLowerCase()]?.[0]?.value === 'ping' ? 'pong' : 'ping',
     }];
 
-    console.log('response', serialize(response));
+    log('response', response);
     callback(null, response);
 }

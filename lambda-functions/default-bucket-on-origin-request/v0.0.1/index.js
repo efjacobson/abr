@@ -1,9 +1,10 @@
-const serialize = (object) => JSON.stringify(object, null, 2);
+const log = (label, object) => console.log(`${label}:`, JSON.stringify(object, null, 2))
 
 exports.handler = (event, context, callback) => {
-    console.log('process.env', serialize(process.env));
-    console.log('event', serialize(event));
-    console.log('context', serialize(context));
+    log('process.env', process.env);
+    log('event', event);
+    log('context', context);
+    log('event.Records[0].cf.request', event.Records[0].cf.request);
 
     const request = event.Records[0].cf.request;
     const urlSearchParams = new URLSearchParams(request.querystring);
@@ -15,6 +16,6 @@ exports.handler = (event, context, callback) => {
     }
 
     request.querystring = urlSearchParams.toString();
-    console.log('request', serialize(request));
+    log('request', request);
     callback(null, request);
 }

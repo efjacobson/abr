@@ -586,6 +586,7 @@ main() {
   read -r -a to_update_as_array <<<"$to_update"
 
   echo 'abr: deploying to create new function(s)'
+  # fixme: on create this is the last necessary deploy
   if ! deploy_stack "$parameters"; then
     exit
   fi
