@@ -13,6 +13,7 @@ Available options:
   --hot         Equivalent to --dry-run=false
   --stack       Defaults to '$stack'
   --bucket      The bucket to upload to
+  --profile     The profile to use
   --help        This message
 "
 }
@@ -33,6 +34,9 @@ parse_arguments() {
       ;;
     --bucket=*)
       bucket="${opt#*=}"
+      ;;
+    --profile=*)
+      profile="${opt#*=}"
       ;;
     --help)
       display_help

@@ -17,7 +17,7 @@ fi
 json_config=
 region='us-east-1'
 stack_name="$stack-$region"
-profile='personal'
+[ -z "$profile" ] && profile='personal'
 default_aws_arguments="--region $region --profile $profile"
 
 if [ '' == "$account_id" ]; then
