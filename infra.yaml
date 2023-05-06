@@ -476,3 +476,51 @@ Resources:
       SourceArn: !Sub
         - "arn:${AWS::Partition}:s3:::${Bucket}"
         - Bucket: !Ref "DefaultBucket"
+
+  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+  DefaultBucketUploaderUser:
+    Type: AWS::IAM::User
+    Properties:
+      Policies:
+        - PolicyName: S3ReadAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Resource: '*'
+                Action: s3:ListAllMyBuckets
+              - Effect: Allow
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:s3:::${Bucket}"
+                  - Bucket: !Ref "DefaultBucket"
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+              - Effect: Allow
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:s3:::${Bucket}/*"
+                  - Bucket: !Ref "DefaultBucket"
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectAcl
+        - PolicyName: S3WriteAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:s3:::${Bucket}/*"
+                  - Bucket: !Ref "DefaultBucket"
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                  - s3:DeleteObject
+        - PolicyName: CloudFormationAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Resource: !Ref "AWS::StackId"
+                Action:
+                  - cloudformation:DescribeStacks

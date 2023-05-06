@@ -67,6 +67,17 @@ get_distribution_id() {
   echo "$id"
 }
 
+get_distribution_domain_name() {
+  local name="$1"
+  init_config
+  local id && id=$(echo "$json_config" | jq -r ".${name}DistributionDomainName")
+  if [ 'null' == "$id" ]; then
+    echo ''
+    return
+  fi
+  echo "$id"
+}
+
 get_function_arn() {
   local name="$1"
   init_config

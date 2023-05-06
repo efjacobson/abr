@@ -81,14 +81,69 @@ main() {
     exit
   fi
 
-  dest="s3://$bucket_name"
-  cmd="aws s3 cp $src $dest/$src --profile $profile"
+  checksum="$(openssl dgst -sha256 -binary "$src" | openssl enc -base64)"
 
-  if $dry_run; then
-    cmd+=' --dryrun'
+  head_object_response=$(aws s3api head-object \
+    --bucket "$bucket_name" \
+    --key "$src" \
+    --checksum-mode ENABLED \
+    --profile "$profile" 2>&1 | sed '/^$/d')
+
+  if [ 'An error occurred (404) when calling the HeadObject operation: Not Found' == "$head_object_response" ]; then
+    cmd="aws s3api put-object \
+      --bucket $bucket_name \
+      --key $(basename "$src") \
+      --body $(realpath "$src") \
+      --checksum-sha256 $checksum \
+      --content-type $(file --mime-type "$src" | cut -d' ' -f2) \
+      --profile $profile"
+    $dry_run && echo "dry run: $cmd"
+    $dry_run || eval "$cmd" >>/dev/null
+    echo "abr: uploaded $src to s3://$bucket/$(basename "$src") with sha256 checksum $checksum"
+    echo "abr: it is available here: https://$(get_distribution_domain_name 'Primary')/$(basename "$src")"
+  elif [ "$checksum" == "$(jq -r '.ChecksumSHA256' <<<"$head_object_response")" ]; then
+    echo 'refusing to upload identical object'
+    echo "abr: it is available here: https://$(get_distribution_domain_name 'Primary')/$(basename "$src")"
+    exit
+  else
+    cmd="aws s3api put-object \
+      --bucket $bucket_name \
+      --key $(basename "$src") \
+      --body $(realpath "$src") \
+      --checksum-sha256 $checksum \
+      --content-type $(file --mime-type "$src" | cut -d' ' -f2) \
+      --profile $profile"
+    $dry_run && echo "dry run: $cmd"
+    $dry_run || eval "$cmd" >>/dev/null
+
+    # aws s3api put-object \
+    #   --bucket "$bucket_name" \
+    #   --key "$(basename "$src")" \
+    #   --body "$src" \
+    #   --checksum-sha256 "$checksum" \
+    #   --profile "$profile" >>/dev/null
+    echo "abr: uploaded $src to s3://$bucket/$(basename "$src") with sha256 checksum $checksum"
+    echo "abr: it is available here: https://$(get_distribution_domain_name 'Primary')/$(basename "$src")"
   fi
 
-  eval "$cmd"
+  #PrimaryDistributionDomainName
+
+  #   if jq -e . >/dev/null 2>&1 <<<"$head_object_response"; then
+  #   echo "$head_object_response"
+  #   echo "$checksum"
+  #       echo 'refusing to upload object that already exists in the bucket'
+  #       exit
+  #   fi
+
+
+  # dest="s3://$bucket_name"
+  # cmd="aws s3 cp $src $dest/$src --profile $profile --checksum-sha256 $checksum"
+
+  # if $dry_run; then
+  #   cmd+=' --dryrun'
+  # fi
+
+  # eval "$cmd"
 }
 
 src="$1"

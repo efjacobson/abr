@@ -1,5 +1,13 @@
 #! /bin/bash
 
+commands=('yq' 'zip')
+for command in "${commands[@]}"; do
+  if ! [ -x "$(command -v "$command")" ]; then
+    echo "command not found: $command"
+    exit
+  fi
+done
+
 # (us(-gov)?|af|ap|ca|eu|me|sa)-(north|east|south|west|central)+-\d+
 region=
 profile=
@@ -68,6 +76,7 @@ get_deploy_template() {
   local AWSLambdaFunction_output_GetAtt_fields=('Arn')
   local AWSLambdaVersion_output_GetAtt_fields=('Version')
   local AWSLogsLogGroup_output_GetAtt_fields=('Arn')
+  local AWSIAMUser_output_GetAtt_fields=('Arn')
   local AWSS3Bucket_output_GetAtt_fields=('Arn' 'DomainName' 'DualStackDomainName' 'RegionalDomainName' 'WebsiteURL')
   local AWSServerlessFunction_output_GetAtt_fields=('Arn')
   local AWSCloudFrontOriginAccessControl_output_GetAtt_fields=('Id')
