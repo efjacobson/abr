@@ -37,7 +37,3 @@ for item in ./*; do
   "./$code/upload.bash" "$(basename "$item")" --profile="$profile" --hot
   rm "$item"
 done
-
-# sleep 10
-
-# rm -rf "$code" "$code.zip"
