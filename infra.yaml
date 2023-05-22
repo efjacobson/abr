@@ -5,6 +5,14 @@ Description: an aerosol consisting of a visible mass of miniature liquid droplet
 
 
 Parameters:
+  HostedZoneName:
+    Type: String
+    AllowedPattern: '^[A-Za-z]+\.[A-Za-z]+\.[A-Za-z]+$'
+
+  CertificateDomainName:
+    Type: String
+    AllowedPattern: '^([A-Za-z]+|\*)\.[A-Za-z]+\.[A-Za-z]+$'
+
   IsFirstRun:
     Default: 'false'
     Type: String
@@ -206,6 +214,8 @@ Resources:
     Condition: IsNotFirstRun
     Properties:
       DistributionConfig:
+        # Aliases:
+        #   - !Ref "HostedZoneName"
         Enabled: true
         DefaultCacheBehavior:
           CachePolicyId: !GetAtt PrimaryDistributionCachePolicy.Id
@@ -524,3 +534,16 @@ Resources:
                 Resource: !Ref "AWS::StackId"
                 Action:
                   - cloudformation:DescribeStacks
+
+  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+  HostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Ref "HostedZoneName"
+
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref "CertificateDomainName"
+      ValidationMethod: 'DNS'

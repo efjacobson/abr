@@ -15,6 +15,8 @@ dry_run=false # todo: danger, sort of. looks like its gonna get stuck in a loop
 did_deploy=false
 
 stack='abr'
+domain='example.com'
+template_only=false
 stack_name=
 account_id=
 _deploy_template=
@@ -26,11 +28,13 @@ readonly template="$here/infra.yaml"
 display_help() {
   echo "
 Available options:
-  --dry-run     When true, no changes are actually made
-  --stack       Defaults to '$stack'
-  --account-id  Your AWS account id
-  --hot         Equivalent to --dry-run=false
-  --help        This message
+  --dry-run=        When true, no changes are actually made
+  --stack=          Defaults to '$stack'
+  --account-id=     Your AWS account id
+  --template-only   Only create the template - do not actually deploy
+  --domain          Defaults to 'example.com'
+  --hot             Equivalent to --dry-run=false
+  --help            This message
 "
 }
 
@@ -43,6 +47,12 @@ for opt in "$@"; do
     ;;
   --stack=*)
     stack="${opt#*=}"
+    ;;
+  --template-only)
+    template_only=true
+    ;;
+  --domain=*)
+    domain="${opt#*=}"
     ;;
   --account-id=*)
     account_id="${opt#*=}"
@@ -73,6 +83,7 @@ get_deploy_template() {
   local AWSCloudFrontCloudFrontOriginAccessIdentity_output_GetAtt_fields=('Id' 'S3CanonicalUserId')
   local AWSCloudFrontDistribution_output_GetAtt_fields=('DomainName' 'Id')
   local AWSIAMRole_output_GetAtt_fields=('Arn' 'RoleId')
+  local AWSRoute53HostedZone_output_GetAtt_fields=('Id')
   local AWSLambdaFunction_output_GetAtt_fields=('Arn')
   local AWSLambdaVersion_output_GetAtt_fields=('Version')
   local AWSLogsLogGroup_output_GetAtt_fields=('Arn')
@@ -108,7 +119,7 @@ get_deploy_template() {
       outputs=$(jq "$GetAtt_filter" <<<"$outputs")
       count=$((count + 1))
     done
-    if [ "$count" == 0 ] && [ 'AWSS3BucketPolicy' != "$config" ] && [ 'AWSLambdaPermission' != "$config" ]; then
+    if [ "$count" == 0 ] && [ 'AWSS3BucketPolicy' != "$config" ] && [ 'AWSLambdaPermission' != "$config" ] && [ 'AWSCertificateManagerCertificate' != "$config" ]; then
       echo "abr: no config for $config!"
     fi
     local insert_filter=". + {\"Outputs\":$outputs}"
@@ -394,31 +405,21 @@ main() {
   local -r latest_on_response_prefix="$stack_name-OnOriginResponse_$latest_on_response_version_friendly"
 
   local parameters
-  parameters='{'
-  parameters+='"IsFirstRun":true'
-  parameters+=','
-  parameters+='"UseAuxiliaryOriginRequestEdgeFunction":false'
-  parameters+=','
-  parameters+='"UseAuxiliaryOriginResponseEdgeFunction":false'
-  parameters+=','
-  parameters+="\"DefaultBucketObjectCreatedFunctionSemanticVersion\":\"$(get_latest_version 'default-bucket-on-create-object')\""
-  parameters+=','
-  parameters+="\"AuxiliaryPrimaryOriginRequestEdgeFunctionName\":\"$latest_on_request_prefix-auxiliary\""
-  parameters+=','
-  parameters+="\"PrimaryOriginRequestEdgeFunctionName\":\"$latest_on_request_prefix\""
-  parameters+=','
-  parameters+="\"AuxiliaryPrimaryOriginRequestEdgeFunctionSemanticVersion\":\"$latest_on_request_version\""
-  parameters+=','
-  parameters+="\"PrimaryOriginRequestEdgeFunctionSemanticVersion\":\"$latest_on_request_version\""
-  parameters+=','
-  parameters+="\"AuxiliaryPrimaryOriginResponseEdgeFunctionName\":\"$latest_on_response_prefix-auxiliary\""
-  parameters+=','
-  parameters+="\"PrimaryOriginResponseEdgeFunctionName\":\"$latest_on_response_prefix\""
-  parameters+=','
-  parameters+="\"AuxiliaryPrimaryOriginResponseEdgeFunctionSemanticVersion\":\"$latest_on_response_version\""
-  parameters+=','
-  parameters+="\"PrimaryOriginResponseEdgeFunctionSemanticVersion\":\"$latest_on_response_version\""
-  parameters+='}'
+  parameters='{}'
+  parameters=$(jq --arg value "$stack.$domain" '.HostedZoneName = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "*.$domain" '.CertificateDomainName = "\($value)"' <<<"$parameters")
+  parameters=$(jq '.IsFirstRun = true' <<<"$parameters")
+  parameters=$(jq '.UseAuxiliaryOriginRequestEdgeFunction = false' <<<"$parameters")
+  parameters=$(jq '.UseAuxiliaryOriginResponseEdgeFunction = false' <<<"$parameters")
+  parameters=$(jq --arg value "$(get_latest_version 'default-bucket-on-create-object')" '.DefaultBucketObjectCreatedFunctionSemanticVersion = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "$latest_on_request_prefix-auxiliary" '.AuxiliaryPrimaryOriginRequestEdgeFunctionName = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "$latest_on_request_prefix" '.PrimaryOriginRequestEdgeFunctionName = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "$latest_on_request_version" '.AuxiliaryPrimaryOriginRequestEdgeFunctionSemanticVersion = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "$latest_on_request_version" '.PrimaryOriginRequestEdgeFunctionSemanticVersion = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "$latest_on_response_prefix-auxiliary" '.AuxiliaryPrimaryOriginResponseEdgeFunctionName = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "$latest_on_response_prefix" '.PrimaryOriginResponseEdgeFunctionName = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "$latest_on_response_version" '.AuxiliaryPrimaryOriginResponseEdgeFunctionSemanticVersion = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "$latest_on_response_version" '.PrimaryOriginResponseEdgeFunctionSemanticVersion = "\($value)"' <<<"$parameters")
 
   local list_resources_response
   local -r describe_response=$(aws cloudformation describe-stacks \
@@ -639,4 +640,9 @@ main() {
 # shellcheck source=/dev/null
 source "$here/shared.bash" "$stack"
 get_deploy_template &>/dev/null
-main
+if [ $template_only == false ]; then
+  main
+else
+  cat "$(get_deploy_template)" && printf "\n the above template is at %s\n" "$(get_deploy_template)" || printf 'something went wrong.\n\n'
+fi
+
