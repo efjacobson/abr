@@ -13,6 +13,7 @@ Available options:
   --hot         Equivalent to --dry-run=false
   --stack       Defaults to '$stack'
   --bucket      The bucket to upload to
+  --key      The s3 object key (defaults to basename of src)
   --profile     The profile to use
   --help        This message
 "
@@ -28,6 +29,9 @@ parse_arguments() {
       ;;
     --stack=*)
       stack="${opt#*=}"
+      ;;
+    --key=*)
+      key="${opt#*=}"
       ;;
     --hot)
       dry_run=false
@@ -66,6 +70,10 @@ main() {
     exit
   fi
 
+  if [ -z "$key" ]; then
+    key="$(basename "$src")"
+  fi
+
   if [ 'default' != "$bucket" ]; then
     echo 'non-default uploads are not currently supported'
     exit
@@ -85,14 +93,14 @@ main() {
 
   head_object_response=$(aws s3api head-object \
     --bucket "$bucket_name" \
-    --key "$src" \
+    --key "$key" \
     --checksum-mode ENABLED \
     --profile "$profile" 2>&1 | sed '/^$/d')
 
   if [ 'An error occurred (404) when calling the HeadObject operation: Not Found' == "$head_object_response" ]; then
     cmd="aws s3api put-object \
       --bucket $bucket_name \
-      --key $(basename "$src") \
+      --key "$key" \
       --body $(realpath "$src") \
       --checksum-sha256 $checksum \
       --content-type $(file --mime-type "$src" | cut -d' ' -f2) \
@@ -108,7 +116,7 @@ main() {
   else
     cmd="aws s3api put-object \
       --bucket $bucket_name \
-      --key $(basename "$src") \
+      --key "$key" \
       --body $(realpath "$src") \
       --checksum-sha256 $checksum \
       --content-type $(file --mime-type "$src" | cut -d' ' -f2) \
