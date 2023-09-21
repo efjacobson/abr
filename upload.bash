@@ -107,11 +107,11 @@ main() {
       --profile $profile"
     $dry_run && echo "dry run: $cmd"
     $dry_run || eval "$cmd" >>/dev/null
-    echo "abr: uploaded $src to s3://$bucket/$(basename "$src") with sha256 checksum $checksum"
-    echo "abr: it is available here: https://$(get_distribution_domain_name 'Primary')/$(basename "$src")"
+    echo "abr: uploaded $src to s3://$bucket/$key with sha256 checksum $checksum"
+    echo "abr: it is available here: https://$(get_distribution_domain_name 'Primary')/$key"
   elif [ "$checksum" == "$(jq -r '.ChecksumSHA256' <<<"$head_object_response")" ]; then
     echo 'refusing to upload identical object'
-    echo "abr: it is available here: https://$(get_distribution_domain_name 'Primary')/$(basename "$src")"
+    echo "abr: it is available here: https://$(get_distribution_domain_name 'Primary')/$key"
     exit
   else
     cmd="aws s3api put-object \
@@ -126,12 +126,12 @@ main() {
 
     # aws s3api put-object \
     #   --bucket "$bucket_name" \
-    #   --key "$(basename "$src")" \
+    #   --key "$key" \
     #   --body "$src" \
     #   --checksum-sha256 "$checksum" \
     #   --profile "$profile" >>/dev/null
-    echo "abr: uploaded $src to s3://$bucket/$(basename "$src") with sha256 checksum $checksum"
-    echo "abr: it is available here: https://$(get_distribution_domain_name 'Primary')/$(basename "$src")"
+    echo "abr: uploaded $src to s3://$bucket/$key with sha256 checksum $checksum"
+    echo "abr: it is available here: https://$(get_distribution_domain_name 'Primary')/$key"
   fi
 
   #PrimaryDistributionDomainName
