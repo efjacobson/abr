@@ -214,9 +214,13 @@ Resources:
     Condition: IsNotFirstRun
     Properties:
       DistributionConfig:
-        # Aliases:
-        #   - !Ref "HostedZoneName"
+        Aliases:
+          - !Ref "HostedZoneName"
         Enabled: true
+        ViewerCertificate:
+          AcmCertificateArn: !Ref "Certificate"
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
         DefaultCacheBehavior:
           CachePolicyId: !GetAtt PrimaryDistributionCachePolicy.Id
           Compress: true
