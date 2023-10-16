@@ -15,7 +15,12 @@ dry_run=false # todo: danger, sort of. looks like its gonna get stuck in a loop
 did_deploy=false
 
 stack='abr'
-domain='example.com'
+primary_subdomain="${stack}"
+primary_domain='primary'
+primary_tld='com'
+website_subdomain='www'
+website_domain='website'
+website_tld='com'
 template_only=false
 stack_name=
 account_id=
@@ -29,10 +34,15 @@ display_help() {
   echo "
 Available options:
   --dry-run=        When true, no changes are actually made
-  --stack=          Defaults to '$stack'
+  --stack=          Defaults to '${stack}'
   --account-id=     Your AWS account id
   --template-only   Only create the template - do not actually deploy
-  --domain          Defaults to 'example.com'
+  --primary-subdomain   Defaults to '${primary_subdomain}'
+  --primary-domain      Defaults to '${primary_domain}'
+  --primary-tld         Defaults to '${primary_tld}'
+  --website-subdomain   Defaults to '${website_subdomain}'
+  --website-domain      Defaults to '${website_domain}'
+  --website-tld         Defaults to '${website_tld}'
   --hot             Equivalent to --dry-run=false
   --help            This message
 "
@@ -51,8 +61,23 @@ for opt in "$@"; do
   --template-only)
     template_only=true
     ;;
-  --domain=*)
-    domain="${opt#*=}"
+  --primary-subdomain=*)
+    primary_subdomain="${opt#*=}"
+    ;;
+  --primary-domain=*)
+    primary_domain="${opt#*=}"
+    ;;
+  --primary-tld=*)
+    primary_tld="${opt#*=}"
+    ;;
+  --website-subdomain=*)
+    website_subdomain="${opt#*=}"
+    ;;
+  --website-domain=*)
+    website_domain="${opt#*=}"
+    ;;
+  --website-tld=*)
+    website_tld="${opt#*=}"
     ;;
   --account-id=*)
     account_id="${opt#*=}"
@@ -87,6 +112,7 @@ get_deploy_template() {
   local AWSLambdaFunction_output_GetAtt_fields=('Arn')
   local AWSLambdaVersion_output_GetAtt_fields=('Version')
   local AWSLogsLogGroup_output_GetAtt_fields=('Arn')
+  local AWSCloudFrontResponseHeadersPolicy_output_GetAtt_fields=('Id' 'LastModifiedTime')
   local AWSIAMUser_output_GetAtt_fields=('Arn')
   local AWSS3Bucket_output_GetAtt_fields=('Arn' 'DomainName' 'DualStackDomainName' 'RegionalDomainName' 'WebsiteURL')
   local AWSServerlessFunction_output_GetAtt_fields=('Arn')
@@ -406,8 +432,11 @@ main() {
 
   local parameters
   parameters='{}'
-  parameters=$(jq --arg value "$stack.$domain" '.HostedZoneName = "\($value)"' <<<"$parameters")
-  parameters=$(jq --arg value "*.$domain" '.CertificateDomainName = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "${primary_subdomain}.${primary_domain}.${primary_tld}" '.PrimaryHostedZoneName = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "*.${primary_domain}.${primary_tld}" '.PrimaryCertificateDomainName = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "${website_subdomain}" '.WebsiteSubdomain = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "${website_domain}" '.WebsiteDomain = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "${website_tld}" '.WebsiteTLD = "\($value)"' <<<"$parameters")
   parameters=$(jq '.IsFirstRun = true' <<<"$parameters")
   parameters=$(jq '.UseAuxiliaryOriginRequestEdgeFunction = false' <<<"$parameters")
   parameters=$(jq '.UseAuxiliaryOriginResponseEdgeFunction = false' <<<"$parameters")

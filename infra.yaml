@@ -5,13 +5,25 @@ Description: an aerosol consisting of a visible mass of miniature liquid droplet
 
 
 Parameters:
-  HostedZoneName:
+  PrimaryHostedZoneName:
     Type: String
     AllowedPattern: '^[A-Za-z]+\.[A-Za-z]+\.[A-Za-z]+$'
 
-  CertificateDomainName:
+  PrimaryCertificateDomainName:
     Type: String
     AllowedPattern: '^([A-Za-z]+|\*)\.[A-Za-z]+\.[A-Za-z]+$'
+
+  WebsiteSubdomain:
+    Type: String
+    AllowedPattern: '^[A-Za-z]+$'
+
+  WebsiteDomain:
+    Type: String
+    AllowedPattern: '^[A-Za-z]+$'
+
+  WebsiteTLD:
+    Type: String
+    AllowedPattern: '^[A-Za-z]+$'
 
   IsFirstRun:
     Default: 'false'
@@ -132,6 +144,52 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
 
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: BucketOwnerFullControl
+      BucketName: !Sub
+        - "${AWS::AccountId}-${WebsiteSubdomain}-${WebsiteDomain}-${WebsiteTLD}"
+        - WebsiteSubdomain: !Ref WebsiteSubdomain
+          WebsiteDomain: !Ref WebsiteDomain
+          WebsiteTLD: !Ref WebsiteTLD
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 2
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: IsNotFirstRun
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+            Condition:
+              StringEquals:
+                'AWS:SourceArn': !Sub
+                  - "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${DistributionId}"
+                  - DistributionId: !GetAtt 'WebsiteDistribution.Id'
+            Principal:
+              Service:
+                - 'cloudfront.amazonaws.com'
+            Resource: !Sub
+              - "arn:${AWS::Partition}:s3:::${Bucket}/*"
+              - Bucket: !Ref "WebsiteBucket"
+
   DefaultBucket:
     Type: AWS::S3::Bucket
     Condition: IsNotFirstRun
@@ -209,18 +267,114 @@ Resources:
             QueryStrings:
               - 'ping'
 
+  WebsiteDistributionCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Condition: IsNotFirstRun
+    Properties:
+      CachePolicyConfig:
+        DefaultTTL: 86400
+        MaxTTL: 31536000
+        MinTTL: 1
+        Name: !Sub "${AWS::StackName}-WebsiteDistributionCachePolicy"
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingGzip: true
+          EnableAcceptEncodingBrotli: true
+          CookiesConfig:
+            CookieBehavior: 'none'
+          HeadersConfig:
+            HeaderBehavior: 'none'
+          QueryStringsConfig:
+            QueryStringBehavior: 'none'
+
+  WebsiteResponseHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub
+        - "${AWS::AccountId}-${WebsiteSubdomain}-${WebsiteDomain}-${WebsiteTLD}-response-headers-policy"
+        - WebsiteSubdomain: !Ref WebsiteSubdomain
+          WebsiteDomain: !Ref WebsiteDomain
+          WebsiteTLD: !Ref WebsiteTLD
+        SecurityHeadersConfig:
+          # StrictTransportSecurity:
+          #   AccessControlMaxAgeSec: 63072000
+          #   IncludeSubdomains: true
+          #   Override: true
+          #   Preload: true
+          # ContentSecurityPolicy:
+          #   ContentSecurityPolicy: "default-src 'none'; img-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'"
+          #   Override: true
+          # ContentTypeOptions:
+          #   Override: true
+          # FrameOptions:
+          #   FrameOption: DENY
+          #   Override: true
+          # ReferrerPolicy:
+          #   ReferrerPolicy: 'same-origin'
+          #   Override: true
+          XSSProtection:
+            ModeBlock: true
+            Override: true
+            Protection: true
+
+  WebsiteDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        DefaultRootObject: 'index.html'
+        Enabled: true
+        HttpVersion: 'http2'
+        IPV6Enabled: true
+        PriceClass: 'PriceClass_All'
+        Aliases:
+          - !Sub
+            - "${WebsiteSubdomain}.${WebsiteDomain}.${WebsiteTLD}"
+            - WebsiteSubdomain: !Ref WebsiteSubdomain
+              WebsiteDomain: !Ref WebsiteDomain
+              WebsiteTLD: !Ref WebsiteTLD
+        CustomErrorResponses:
+          - ErrorCachingMinTTL: 60
+            ErrorCode: 404
+            ResponseCode: 404
+            ResponsePagePath: '/404.html'
+          - ErrorCachingMinTTL: 60
+            ErrorCode: 403
+            ResponseCode: 403
+            ResponsePagePath: '/403.html'
+        DefaultCacheBehavior:
+          CachePolicyId: !GetAtt WebsiteDistributionCachePolicy.Id
+          Compress: true
+          TargetOriginId: !Ref WebsiteBucket
+          ViewerProtocolPolicy: 'redirect-to-https'
+          ResponseHeadersPolicyId: !Ref WebsiteResponseHeadersPolicy
+        Origins:
+          - DomainName: !GetAtt WebsiteBucket.DomainName
+            Id: !Ref WebsiteBucket
+            OriginAccessControlId: !GetAtt WebsiteBucketCloudFrontOriginAccessControl.Id
+            S3OriginConfig: {}
+        ViewerCertificate:
+          AcmCertificateArn: !Ref 'Certificate'
+          MinimumProtocolVersion: 'TLSv1.1_2016'
+          SslSupportMethod: 'sni-only'
+        # Logging:
+        #   Bucket: !Ref 'S3BucketLogsName'
+        #   IncludeCookies: false
+        #   Prefix: 'cdn/'
+        # Aliases:
+        #   - !Sub '${SubDomain}.${DomainName}'
+        #   - !If [CreateApexConfig, !Ref DomainName, !Ref 'AWS::NoValue']
+
   PrimaryDistribution:
     Type: AWS::CloudFront::Distribution
     Condition: IsNotFirstRun
     Properties:
       DistributionConfig:
-        Aliases:
-          - !Ref "HostedZoneName"
         Enabled: true
-        ViewerCertificate:
-          AcmCertificateArn: !Ref "Certificate"
-          SslSupportMethod: sni-only
-          MinimumProtocolVersion: TLSv1.2_2021
+        HttpVersion: 'http2'
+        IPV6Enabled: true
+        PriceClass: 'PriceClass_All'
+        Aliases:
+          - !Ref "PrimaryHostedZoneName"
         DefaultCacheBehavior:
           CachePolicyId: !GetAtt PrimaryDistributionCachePolicy.Id
           Compress: true
@@ -261,14 +415,27 @@ Resources:
               - CreateOriginAccessControl
               - !GetAtt DefaultBucketCloudFrontOriginAccessControl.Id
               - !Ref 'AWS::NoValue'
+        ViewerCertificate:
+          AcmCertificateArn: !Ref "Certificate"
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
   
   DefaultBucketCloudFrontOriginAccessControl:
     Type: AWS::CloudFront::OriginAccessControl
     Condition: CreateOriginAccessControl
     Properties: 
       OriginAccessControlConfig:
-        Description: Default Origin Access Control
-        Name: !Ref AWS::StackName
+        Name: !Sub "${AWS::StackName}-DefaultBucketCloudFrontOriginAccessControl"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+  
+  WebsiteBucketCloudFrontOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Condition: CreateOriginAccessControl
+    Properties: 
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-WebsiteBucketCloudFrontOriginAccessControl"
         OriginAccessControlOriginType: s3
         SigningBehavior: always
         SigningProtocol: sigv4
@@ -284,7 +451,7 @@ Resources:
       FunctionName: !Ref AuxiliaryPrimaryOriginRequestEdgeFunctionName
       Handler: index.handler
       Role: !GetAtt PrimaryOriginRequestEdgeFunctionRole.Arn
-      Runtime: nodejs14.x # nodejs16.x
+      Runtime: nodejs18.x # nodejs16.x
       Code:
         S3Bucket: !Ref LambdaFunctionBucket
         S3Key: !Sub
@@ -311,7 +478,7 @@ Resources:
       FunctionName: !Ref AuxiliaryPrimaryOriginResponseEdgeFunctionName
       Handler: index.handler
       Role: !GetAtt PrimaryOriginResponseEdgeFunctionRole.Arn
-      Runtime: nodejs14.x # nodejs16.x
+      Runtime: nodejs18.x # nodejs16.x
       Code:
         S3Bucket: !Ref LambdaFunctionBucket
         S3Key: !Sub
@@ -338,7 +505,7 @@ Resources:
       FunctionName: !Ref PrimaryOriginRequestEdgeFunctionName
       Handler: index.handler
       Role: !GetAtt PrimaryOriginRequestEdgeFunctionRole.Arn
-      Runtime: nodejs14.x # nodejs16.x
+      Runtime: nodejs18.x # nodejs16.x
       Code:
         S3Bucket: !Ref LambdaFunctionBucket
         S3Key: !Sub
@@ -365,7 +532,7 @@ Resources:
       FunctionName: !Ref PrimaryOriginResponseEdgeFunctionName
       Handler: index.handler
       Role: !GetAtt PrimaryOriginResponseEdgeFunctionRole.Arn
-      Runtime: nodejs14.x # nodejs16.x
+      Runtime: nodejs18.x # nodejs16.x
       Code:
         S3Bucket: !Ref LambdaFunctionBucket
         S3Key: !Sub
@@ -448,7 +615,7 @@ Resources:
       FunctionName: !Sub "${AWS::StackName}-DefaultBucketObjectCreatedFunction"
       Handler: index.handler
       Role: !GetAtt DefaultBucketObjectCreatedFunctionRole.Arn
-      Runtime: nodejs14.x # nodejs16.x
+      Runtime: nodejs18.x # nodejs16.x
       Code:
         S3Bucket: !Ref LambdaFunctionBucket
         S3Key: !Sub
@@ -544,10 +711,19 @@ Resources:
   HostedZone:
     Type: AWS::Route53::HostedZone
     Properties:
-      Name: !Ref "HostedZoneName"
+      Name: !Ref "PrimaryHostedZoneName"
+  
+  WebsiteHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Sub
+        - "${WebsiteSubdomain}.${WebsiteDomain}.${WebsiteTLD}"
+        - WebsiteSubdomain: !Ref WebsiteSubdomain
+          WebsiteDomain: !Ref WebsiteDomain
+          WebsiteTLD: !Ref WebsiteTLD
 
   Certificate:
     Type: AWS::CertificateManager::Certificate
     Properties:
-      DomainName: !Ref "CertificateDomainName"
+      DomainName: !Ref "PrimaryCertificateDomainName"
       ValidationMethod: 'DNS'
