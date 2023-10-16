@@ -96,6 +96,9 @@ main() {
     --key "$key" \
     --checksum-mode ENABLED \
     --profile "$profile" 2>&1 | sed '/^$/d')
+  
+  domain_name=$(get_distribution_domain_name 'Primary')
+  alias=$(get_distribution_alias 'Primary')
 
   if [ 'An error occurred (404) when calling the HeadObject operation: Not Found' == "$head_object_response" ]; then
     cmd="aws s3api put-object \
@@ -107,11 +110,13 @@ main() {
       --profile $profile"
     $dry_run && echo "dry run: $cmd"
     $dry_run || eval "$cmd" >>/dev/null
-    echo "abr: uploaded $src to s3://$bucket/$key with sha256 checksum $checksum"
-    echo "abr: it is available here: https://$(get_distribution_domain_name 'Primary')/$key"
-  elif [ "$checksum" == "$(jq -r '.ChecksumSHA256' <<<"$head_object_response")" ]; then
+    echo "abr: uploaded ${src} to s3://$bucket/${key} with sha256 checksum ${checksum}"
+    echo "abr: it is available here: https://${domain_name}/${key}"
+    echo "abr: and here: https://${alias}/${key}"
+  elif [ "${checksum}" == "$(jq -r '.ChecksumSHA256' <<<"${head_object_response}")" ]; then
     echo 'refusing to upload identical object'
-    echo "abr: it is available here: https://$(get_distribution_domain_name 'Primary')/$key"
+    echo "abr: it is available here: https://${domain_name}/${key}"
+    echo "abr: and here: https://${alias}/${key}"
     exit
   else
     cmd="aws s3api put-object \
@@ -130,8 +135,9 @@ main() {
     #   --body "$src" \
     #   --checksum-sha256 "$checksum" \
     #   --profile "$profile" >>/dev/null
-    echo "abr: uploaded $src to s3://$bucket/$key with sha256 checksum $checksum"
-    echo "abr: it is available here: https://$(get_distribution_domain_name 'Primary')/$key"
+    echo "abr: uploaded ${src} to s3://$bucket/${key} with sha256 checksum ${checksum}"
+    echo "abr: it is available here: https://${domain_name}/${key}"
+    echo "abr: and here: https://${alias}/${key}"
   fi
 
   #PrimaryDistributionDomainName

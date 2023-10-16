@@ -67,6 +67,18 @@ get_distribution_id() {
   echo "$id"
 }
 
+get_distribution_alias() {
+  local name="$1"
+  local id && id="$(get_distribution_id "$name")"
+  local distribution_config && distribution_config=$(aws cloudfront get-distribution-config --id "$id" --profile "$profile")
+  local alias && alias=$(jq -r '.DistributionConfig.Aliases.Items[0]' <<<"$distribution_config")
+  if [ 'null' == "$alias" ]; then
+    echo ''
+    return
+  fi
+  echo "$alias"
+}
+
 get_distribution_domain_name() {
   local name="$1"
   init_config
