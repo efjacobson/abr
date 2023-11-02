@@ -2,7 +2,7 @@
 
 here="$(dirname "$(realpath "$0")")"
 stack='abr'
-bucket=default
+dest=Default
 dry_run=true
 profile=
 
@@ -12,7 +12,7 @@ Available options:
   --dry-run     Deploy as a dry run, aka the --dryrun flag
   --hot         Equivalent to --dry-run=false
   --stack       Defaults to '$stack'
-  --bucket      The bucket to upload to
+  --dest      The place to upload to
   --key      The s3 object key (defaults to basename of src)
   --profile     The profile to use
   --help        This message
@@ -36,8 +36,8 @@ parse_arguments() {
     --hot)
       dry_run=false
       ;;
-    --bucket=*)
-      bucket="${opt#*=}"
+    --dest=*)
+      dest="${opt#*=}"
       ;;
     --profile=*)
       profile="${opt#*=}"
@@ -52,6 +52,14 @@ parse_arguments() {
       ;;
     esac
   done
+}
+
+get_distribution_nickname() {
+  if [ "${1}" == 'Default' ]; then
+    echo 'Primary'
+    return
+  fi
+  echo "${1}"
 }
 
 main() {
@@ -74,15 +82,15 @@ main() {
     key="$(basename "$src")"
   fi
 
-  if [ 'default' != "$bucket" ]; then
-    echo 'non-default uploads are not currently supported'
+  if [ 'Default' != "${dest}" ] && [ "Website" != "${dest}" ]; then
+    echo 'unsupported destination'
     exit
   fi
 
   # shellcheck source=/dev/null
   source "$here/shared.bash" "$stack"
 
-  bucket_name=$(get_bucket_name 'Default')
+  bucket_name=$(get_bucket_name "${dest}")
 
   if [ 'null' == "$bucket_name" ]; then
     echo 'unable to determine bucket name'
@@ -97,8 +105,8 @@ main() {
     --checksum-mode ENABLED \
     --profile "$profile" 2>&1 | sed '/^$/d')
   
-  domain_name=$(get_distribution_domain_name 'Primary')
-  alias=$(get_distribution_alias 'Primary')
+  domain_name=$(get_distribution_domain_name $(get_distribution_nickname "${dest}"))
+  alias=$(get_distribution_alias $(get_distribution_nickname "${dest}"))
 
   if [ 'An error occurred (404) when calling the HeadObject operation: Not Found' == "$head_object_response" ]; then
     cmd="aws s3api put-object \
