@@ -420,10 +420,15 @@ lambda_in_sync() {
 }
 
 main() {
-  local -r latest_on_request='default-bucket-on-origin-request'
-  local -r latest_on_request_version=$(get_latest_version "$latest_on_request")
-  local -r latest_on_request_version_friendly="${latest_on_request_version//./-}"
-  local -r latest_on_request_prefix="$stack_name-OnOriginRequest_$latest_on_request_version_friendly"
+  local -r latest_on_origin_request='default-bucket-on-origin-request'
+  local -r latest_on_origin_request_version=$(get_latest_version "$latest_on_origin_request")
+  local -r latest_on_origin_request_version_friendly="${latest_on_origin_request_version//./-}"
+  local -r latest_on_origin_request_prefix="$stack_name-OnOriginRequest_$latest_on_origin_request_version_friendly"
+
+  local -r latest_on_viewer_request='default-bucket-on-viewer-request'
+  local -r latest_on_viewer_request_version=$(get_latest_version "$latest_on_viewer_request")
+  local -r latest_on_viewer_request_version_friendly="${latest_on_viewer_request_version//./-}"
+  local -r latest_on_viewer_request_prefix="$stack_name-OnViewerRequest_$latest_on_viewer_request_version_friendly"
 
   local -r latest_on_response='default-bucket-on-origin-response'
   local -r latest_on_response_version=$(get_latest_version "$latest_on_response")
@@ -438,13 +443,23 @@ main() {
   parameters=$(jq --arg value "${website_domain}" '.WebsiteDomain = "\($value)"' <<<"$parameters")
   parameters=$(jq --arg value "${website_tld}" '.WebsiteTLD = "\($value)"' <<<"$parameters")
   parameters=$(jq '.IsFirstRun = true' <<<"$parameters")
-  parameters=$(jq '.UseAuxiliaryOriginRequestEdgeFunction = false' <<<"$parameters")
-  parameters=$(jq '.UseAuxiliaryOriginResponseEdgeFunction = false' <<<"$parameters")
+
   parameters=$(jq --arg value "$(get_latest_version 'default-bucket-on-create-object')" '.DefaultBucketObjectCreatedFunctionSemanticVersion = "\($value)"' <<<"$parameters")
-  parameters=$(jq --arg value "$latest_on_request_prefix-auxiliary" '.AuxiliaryPrimaryOriginRequestEdgeFunctionName = "\($value)"' <<<"$parameters")
-  parameters=$(jq --arg value "$latest_on_request_prefix" '.PrimaryOriginRequestEdgeFunctionName = "\($value)"' <<<"$parameters")
-  parameters=$(jq --arg value "$latest_on_request_version" '.AuxiliaryPrimaryOriginRequestEdgeFunctionSemanticVersion = "\($value)"' <<<"$parameters")
-  parameters=$(jq --arg value "$latest_on_request_version" '.PrimaryOriginRequestEdgeFunctionSemanticVersion = "\($value)"' <<<"$parameters")
+
+  parameters=$(jq '.UseAuxiliaryOriginRequestEdgeFunction = false' <<<"$parameters")
+  parameters=$(jq '.UseAuxiliaryViewerRequestEdgeFunction = false' <<<"$parameters")
+  parameters=$(jq '.UseAuxiliaryOriginResponseEdgeFunction = false' <<<"$parameters")
+
+  parameters=$(jq --arg value "$latest_on_origin_request_prefix-auxiliary" '.AuxiliaryPrimaryOriginRequestEdgeFunctionName = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "$latest_on_origin_request_prefix" '.PrimaryOriginRequestEdgeFunctionName = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "$latest_on_origin_request_version" '.AuxiliaryPrimaryOriginRequestEdgeFunctionSemanticVersion = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "$latest_on_origin_request_version" '.PrimaryOriginRequestEdgeFunctionSemanticVersion = "\($value)"' <<<"$parameters")
+
+  parameters=$(jq --arg value "$latest_on_viewer_request_prefix-auxiliary" '.AuxiliaryPrimaryViewerRequestEdgeFunctionName = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "$latest_on_viewer_request_prefix" '.PrimaryViewerRequestEdgeFunctionName = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "$latest_on_viewer_request_version" '.AuxiliaryPrimaryViewerRequestEdgeFunctionSemanticVersion = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "$latest_on_viewer_request_version" '.PrimaryViewerRequestEdgeFunctionSemanticVersion = "\($value)"' <<<"$parameters")
+
   parameters=$(jq --arg value "$latest_on_response_prefix-auxiliary" '.AuxiliaryPrimaryOriginResponseEdgeFunctionName = "\($value)"' <<<"$parameters")
   parameters=$(jq --arg value "$latest_on_response_prefix" '.PrimaryOriginResponseEdgeFunctionName = "\($value)"' <<<"$parameters")
   parameters=$(jq --arg value "$latest_on_response_version" '.AuxiliaryPrimaryOriginResponseEdgeFunctionSemanticVersion = "\($value)"' <<<"$parameters")
@@ -536,7 +551,8 @@ main() {
   local -r lambda_bucket="$account_id-$stack_name-lambda-function"
   local -r latest_on_create='default-bucket-on-create-object'
   local -r keys=(
-    "$(snake_to_kabob "$latest_on_request")/$latest_on_request_version/index.js.zip"
+    "$(snake_to_kabob "$latest_on_viewer_request")/$latest_on_viewer_request_version/index.js.zip"
+    "$(snake_to_kabob "$latest_on_origin_request")/$latest_on_origin_request_version/index.js.zip"
     "$(snake_to_kabob "$latest_on_response")/$latest_on_response_version/index.js.zip"
     "$latest_on_create/$(get_latest_version "$latest_on_create")/index.js.zip"
   )
@@ -590,26 +606,33 @@ main() {
   origin_request_lambda_association=$(jq '.Items[] | select(.EventType=="origin-request")' <<<"$associations")
   origin_request_lambda_association_arn=$(jq -r '.LambdaFunctionARN' <<<"$origin_request_lambda_association")
 
+  viewer_request_lambda_association=$(jq '.Items[] | select(.EventType=="viewer-request")' <<<"$associations")
+  viewer_request_lambda_association_arn=$(jq -r '.LambdaFunctionARN' <<<"$viewer_request_lambda_association")
+
   origin_response_lambda_association=$(jq '.Items[] | select(.EventType=="origin-response")' <<<"$associations")
   origin_response_lambda_association_arn=$(jq -r '.LambdaFunctionARN' <<<"$origin_response_lambda_association")
 
-  local -r edge_lambdas="[\
-  {\
-  \"arn\":\"$origin_request_lambda_association_arn\"\
-  ,\
-  \"latest_version\":\"$latest_on_request_version\"\
-  ,\
-  \"event_type\":\"origin-request\"\
-  }\
-  ,\
-  {\
-  \"arn\":\"$origin_response_lambda_association_arn\"\
-  ,\
-  \"latest_version\":\"$latest_on_response_version\"\
-  ,\
-  \"event_type\":\"origin-response\"\
-  }\
-  ]"
+  edge_lambdas="$(jq '.' < <(echo '{"data":[]}'))"
+  edge_lambdas=$( \
+    jq \
+      --arg arn "${origin_request_lambda_association_arn}" \
+      --arg latest_version "${latest_on_origin_request_version}" \
+      '.data[.data| length] |= . + { "arn":$arn, "latest_version":$latest_version, "event_type":"origin-request" }' <<<"$edge_lambdas" \
+  )
+  edge_lambdas=$( \
+    jq \
+      --arg arn "${viewer_request_lambda_association_arn}" \
+      --arg latest_version "${latest_on_viewer_request_version}" \
+      '.data[.data| length] |= . + { "arn":$arn, "latest_version":$latest_version, "event_type":"viewer-request" }' <<<"$edge_lambdas" \
+  )
+ edge_lambdas=$( \
+    jq \
+      --arg arn "${origin_response_lambda_association_arn}" \
+      --arg latest_version "${latest_on_response_version}" \
+      '.data[.data| length] |= . + { "arn":$arn, "latest_version":$latest_version, "event_type":"origin-request" }' <<<"$edge_lambdas" \
+  )
+
+  edge_lambdas=$(jq  '.data' <<<"$edge_lambdas")
 
   # TODO change the non-auxiliary back to the one that is associated if it does not need to be updated
   # assuming you dont want to just forget about the auxiliary all together by using the update/delete policy thing

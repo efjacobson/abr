@@ -39,6 +39,13 @@ Parameters:
       - 'true'
       - 'false'
 
+  UseAuxiliaryViewerRequestEdgeFunction:
+    Default: 'false'
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+
   UseAuxiliaryOriginResponseEdgeFunction:
     Default: 'false'
     Type: String
@@ -66,7 +73,15 @@ Parameters:
     Type: String
     AllowedPattern: '^([A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-OnOriginRequest_v\d+-\d+-\d+-auxiliary)?$'
 
+  AuxiliaryPrimaryViewerRequestEdgeFunctionName:
+    Type: String
+    AllowedPattern: '^([A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-OnViewerRequest_v\d+-\d+-\d+-auxiliary)?$'
+
   AuxiliaryPrimaryOriginRequestEdgeFunctionSemanticVersion:
+    Type: String
+    AllowedPattern: '^(v\d+\.\d+\.\d+)?$'
+
+  AuxiliaryPrimaryViewerRequestEdgeFunctionSemanticVersion:
     Type: String
     AllowedPattern: '^(v\d+\.\d+\.\d+)?$'
 
@@ -75,7 +90,17 @@ Parameters:
     Type: String
     AllowedPattern: '^([A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-OnOriginRequest_v\d+-\d+-\d+)?$'
 
+  PrimaryViewerRequestEdgeFunctionName:
+    # Default: ''
+    Type: String
+    AllowedPattern: '^([A-Za-z]+[A-Za-z-]*-(us-east-1|us-west-2)-OnViewerRequest_v\d+-\d+-\d+)?$'
+
   PrimaryOriginRequestEdgeFunctionSemanticVersion:
+    # Default: ''
+    Type: String
+    AllowedPattern: '^(v\d+\.\d+\.\d+)?$'
+
+  PrimaryViewerRequestEdgeFunctionSemanticVersion:
     # Default: ''
     Type: String
     AllowedPattern: '^(v\d+\.\d+\.\d+)?$'
@@ -112,6 +137,10 @@ Conditions:
   DoUseAuxiliaryOriginRequestEdgeFunction: !Equals
     - 'true'
     - !Ref UseAuxiliaryOriginRequestEdgeFunction
+
+  DoUseAuxiliaryViewerRequestEdgeFunction: !Equals
+    - 'true'
+    - !Ref UseAuxiliaryViewerRequestEdgeFunction
 
   DoUseAuxiliaryOriginResponseEdgeFunction: !Equals
     - 'true'
@@ -384,6 +413,18 @@ Resources:
           TargetOriginId: !Ref DefaultBucket
           ViewerProtocolPolicy: redirect-to-https
           LambdaFunctionAssociations:
+            - EventType: viewer-request
+              IncludeBody: true
+              LambdaFunctionARN: !If
+                - DoUseAuxiliaryViewerRequestEdgeFunction
+                - !Sub
+                  - "${FunctionArn}:${Version}"
+                  - FunctionArn: !GetAtt AuxiliaryPrimaryViewerRequestEdgeFunction.Arn
+                    Version: !GetAtt AuxiliaryPrimaryViewerRequestEdgeFunctionVersion.Version
+                - !Sub
+                  - "${FunctionArn}:${Version}"
+                  - FunctionArn: !GetAtt PrimaryViewerRequestEdgeFunction.Arn
+                    Version: !GetAtt PrimaryViewerRequestEdgeFunctionVersion.Version
             - EventType: origin-request
               IncludeBody: true
               LambdaFunctionARN: !If
@@ -472,6 +513,33 @@ Resources:
 
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
+  AuxiliaryPrimaryViewerRequestEdgeFunction:
+    Type: AWS::Lambda::Function
+    Condition: DoUseAuxiliaryViewerRequestEdgeFunction
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      FunctionName: !Ref AuxiliaryPrimaryViewerRequestEdgeFunctionName
+      Handler: index.handler
+      Role: !GetAtt PrimaryViewerRequestEdgeFunctionRole.Arn
+      Runtime: nodejs18.x # nodejs16.x
+      Code:
+        S3Bucket: !Ref LambdaFunctionBucket
+        S3Key: !Sub
+          - "default-bucket-on-viewer-request/${Version}/index.js.zip"
+          - Version: !Ref AuxiliaryPrimaryViewerRequestEdgeFunctionSemanticVersion
+
+  AuxiliaryPrimaryViewerRequestEdgeFunctionVersion:
+    Type: AWS::Lambda::Version
+    Condition: DoUseAuxiliaryViewerRequestEdgeFunction
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: !Ref AuxiliaryPrimaryViewerRequestEdgeFunctionSemanticVersion
+      FunctionName: !GetAtt AuxiliaryPrimaryViewerRequestEdgeFunction.Arn
+
+  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
   AuxiliaryPrimaryOriginResponseEdgeFunction:
     Type: AWS::Lambda::Function
     Condition: DoUseAuxiliaryOriginResponseEdgeFunction
@@ -523,6 +591,33 @@ Resources:
     Properties:
       Description: !Ref PrimaryOriginRequestEdgeFunctionSemanticVersion
       FunctionName: !GetAtt PrimaryOriginRequestEdgeFunction.Arn
+
+  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+  PrimaryViewerRequestEdgeFunction:
+    Type: AWS::Lambda::Function
+    Condition: IsNotFirstRun
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      FunctionName: !Ref PrimaryViewerRequestEdgeFunctionName
+      Handler: index.handler
+      Role: !GetAtt PrimaryViewerRequestEdgeFunctionRole.Arn
+      Runtime: nodejs18.x # nodejs16.x
+      Code:
+        S3Bucket: !Ref LambdaFunctionBucket
+        S3Key: !Sub
+          - "default-bucket-on-viewer-request/${Version}/index.js.zip"
+          - Version: !Ref PrimaryViewerRequestEdgeFunctionSemanticVersion
+
+  PrimaryViewerRequestEdgeFunctionVersion:
+    Type: AWS::Lambda::Version
+    Condition: IsNotFirstRun
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: !Ref PrimaryViewerRequestEdgeFunctionSemanticVersion
+      FunctionName: !GetAtt PrimaryViewerRequestEdgeFunction.Arn
 
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
@@ -579,6 +674,35 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: !Sub "arn:${AWS::Partition}:logs:*:${AWS::AccountId}:log-group:/aws/lambda/*.${AWS::StackName}-OnOriginRequest_v*"
+
+  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+
+  PrimaryViewerRequestEdgeFunctionRole:
+    Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - edgelambda.amazonaws.com
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: LogsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:${AWS::Partition}:logs:*:${AWS::AccountId}:log-group:/aws/lambda/*.${AWS::StackName}-OnViewerRequest_v*"
 
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
