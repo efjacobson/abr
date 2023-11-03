@@ -11,8 +11,8 @@ done
 # (us(-gov)?|af|ap|ca|eu|me|sa)-(north|east|south|west|central)+-\d+
 region=
 profile=
-dry_run=false # todo: danger, sort of. looks like its gonna get stuck in a loop
-did_deploy=false
+dry_run='false' # todo: danger, sort of. looks like its gonna get stuck in a loop
+did_deploy='false'
 
 stack='abr'
 primary_subdomain="${stack}"
@@ -368,16 +368,16 @@ lambdas_to_update() {
   local latest_version
   local to_update=
   while read -r lambda; do
-    arn=$(jq -r '.arn' <<<"$lambda")
-    latest_version=$(jq -r '.latest_version' <<<"$lambda")
-    if ! lambda_in_sync "$arn" "$latest_version"; then
-      if [ -n "$to_update" ]; then
+    arn=$(jq -r '.arn' <<<"${lambda}")
+    latest_version=$(jq -r '.latest_version' <<<"${lambda}")
+    if ! lambda_in_sync "$arn" "${latest_version}"; then
+      if [ -n "${to_update}" ]; then
         to_update+=" "
       fi
-      to_update+=$(jq -r '.event_type' <<<"$lambda")
+      to_update+=$(jq -r '.event_type' <<<"${lambda}")
     fi
   done < <(jq -c '.[]' <<<"$1")
-  echo "$to_update"
+  echo "${to_update}"
 }
 
 lambda_in_sync() {
@@ -564,92 +564,92 @@ main() {
     fi
   done
 
-  if [ -z "$list_resources_response" ]; then
+  if [ -z "${list_resources_response}" ]; then
     list_resources_response=$(aws cloudformation list-stack-resources \
-      --region="$region" \
-      --profile "$profile" \
-      --stack "$stack_name" | sed '/^$/d')
-    if [ -n "$(jq '.' <<<"$list_resources_response" 2>&1 1>/dev/null | sed '/^$/d')" ]; then
-      echo "$list_resources_response"
+      --region="${region}" \
+      --profile "${profile}" \
+      --stack "${stack_name}" | sed '/^$/d')
+    if [ -n "$(jq '.' <<<"${list_resources_response}" 2>&1 1>/dev/null | sed '/^$/d')" ]; then
+      echo "${list_resources_response}"
       echo 'abr: something went wrong ^^'
       exit
     fi
   fi
 
-  distribution_id=$(jq -r '.StackResourceSummaries[] | select(.LogicalResourceId=="PrimaryDistribution") | .PhysicalResourceId' <<<"$list_resources_response")
-  if [ -z "$distribution_id" ] || [ 'null' == "$distribution_id" ]; then
+  distribution_id=$(jq -r '.StackResourceSummaries[] | select(.LogicalResourceId=="PrimaryDistribution") | .PhysicalResourceId' <<<"${list_resources_response}")
+  if [ -z "${distribution_id}" ] || [ 'null' == "${distribution_id}" ]; then
     echo 'abr: deploying to create distribution'
-    if ! deploy_stack "$parameters"; then
+    if ! deploy_stack "${parameters}"; then
       exit
     fi
-    did_deploy=true
+    did_deploy='true'
     list_resources_response=$(aws cloudformation list-stack-resources \
-      --region="$region" \
-      --profile "$profile" \
-      --stack "$stack_name" | sed '/^$/d')
-    if [ -n "$(jq '.' <<<"$list_resources_response" 2>&1 1>/dev/null | sed '/^$/d')" ]; then
-      echo "$list_resources_response"
+      --region="${region}" \
+      --profile "${profile}" \
+      --stack "${stack_name}" | sed '/^$/d')
+    if [ -n "$(jq '.' <<<"${list_resources_response}" 2>&1 1>/dev/null | sed '/^$/d')" ]; then
+      echo "${list_resources_response}"
       echo 'abr: something went wrong ^^'
       exit
     fi
-    distribution_id=$(jq -r '.StackResourceSummaries[] | select(.LogicalResourceId=="PrimaryDistribution") | .PhysicalResourceId' <<<"$list_resources_response")
+    distribution_id=$(jq -r '.StackResourceSummaries[] | select(.LogicalResourceId=="PrimaryDistribution") | .PhysicalResourceId' <<<"${list_resources_response}")
 
     echo 'abr: deploying to create origin access control...'
-    if ! deploy_stack "$parameters"; then
+    if ! deploy_stack "${parameters}"; then
       exit
     fi
   fi
-  parameters=$(jq '.PrimaryDistributionExists = true' <<<"$parameters")
+  parameters=$(jq '.PrimaryDistributionExists = true' <<<"${parameters}")
 
-  local associations && associations=$(aws cloudfront get-distribution-config --id "$distribution_id" --profile "$profile" --query="DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations")
+  local associations && associations=$(aws cloudfront get-distribution-config --id "${distribution_id}" --profile "${profile}" --query="DistributionConfig.DefaultCacheBehavior.LambdaFunctionAssociations")
 
-  origin_request_lambda_association=$(jq '.Items[] | select(.EventType=="origin-request")' <<<"$associations")
+  origin_request_lambda_association=$(jq '.Items[] | select(.EventType=="origin-request")' <<<"${associations}")
   origin_request_lambda_association_arn=$(jq -r '.LambdaFunctionARN' <<<"$origin_request_lambda_association")
 
-  viewer_request_lambda_association=$(jq '.Items[] | select(.EventType=="viewer-request")' <<<"$associations")
+  viewer_request_lambda_association=$(jq '.Items[] | select(.EventType=="viewer-request")' <<<"${associations}")
   viewer_request_lambda_association_arn=$(jq -r '.LambdaFunctionARN' <<<"$viewer_request_lambda_association")
 
-  origin_response_lambda_association=$(jq '.Items[] | select(.EventType=="origin-response")' <<<"$associations")
-  origin_response_lambda_association_arn=$(jq -r '.LambdaFunctionARN' <<<"$origin_response_lambda_association")
+  origin_response_lambda_association=$(jq '.Items[] | select(.EventType=="origin-response")' <<<"${associations}")
+  origin_response_lambda_association_arn=$(jq -r '.LambdaFunctionARN' <<<"${origin_response_lambda_association}")
 
   edge_lambdas="$(jq '.' < <(echo '{"data":[]}'))"
   edge_lambdas=$( \
     jq \
       --arg arn "${origin_request_lambda_association_arn}" \
       --arg latest_version "${latest_on_origin_request_version}" \
-      '.data[.data| length] |= . + { "arn":$arn, "latest_version":$latest_version, "event_type":"origin-request" }' <<<"$edge_lambdas" \
+      '.data[.data| length] |= . + { "arn":$arn, "latest_version":$latest_version, "event_type":"origin-request" }' <<<"${edge_lambdas}" \
   )
   edge_lambdas=$( \
     jq \
       --arg arn "${viewer_request_lambda_association_arn}" \
       --arg latest_version "${latest_on_viewer_request_version}" \
-      '.data[.data| length] |= . + { "arn":$arn, "latest_version":$latest_version, "event_type":"viewer-request" }' <<<"$edge_lambdas" \
+      '.data[.data| length] |= . + { "arn":$arn, "latest_version":$latest_version, "event_type":"viewer-request" }' <<<"${edge_lambdas}" \
   )
  edge_lambdas=$( \
     jq \
       --arg arn "${origin_response_lambda_association_arn}" \
       --arg latest_version "${latest_on_response_version}" \
-      '.data[.data| length] |= . + { "arn":$arn, "latest_version":$latest_version, "event_type":"origin-request" }' <<<"$edge_lambdas" \
+      '.data[.data| length] |= . + { "arn":$arn, "latest_version":$latest_version, "event_type":"origin-request" }' <<<"${edge_lambdas}" \
   )
 
-  edge_lambdas=$(jq  '.data' <<<"$edge_lambdas")
+  edge_lambdas=$(jq  '.data' <<<"${edge_lambdas}")
 
   # TODO change the non-auxiliary back to the one that is associated if it does not need to be updated
   # assuming you dont want to just forget about the auxiliary all together by using the update/delete policy thing
 
-  local -r to_update=$(lambdas_to_update "$edge_lambdas")
-  if [ -z "$to_update" ] && ! $did_deploy; then
+  local -r to_update=$(lambdas_to_update "${edge_lambdas}")
+  if [ -z "${to_update}" ] && [ "${did_deploy}" == 'false' ]; then
     echo 'abr: deploying because this command should always deploy at least once...'
-    if deploy_stack "$parameters"; then
+    if deploy_stack "${parameters}"; then
       echo 'abr: done without errors...'
     fi
     exit
   fi
-  read -r -a to_update_as_array <<<"$to_update"
+  read -r -a to_update_as_array <<<"${to_update}"
 
   echo 'abr: deploying to create new function(s)'
   # fixme: on create this is the last necessary deploy
-  if ! deploy_stack "$parameters"; then
+  if ! deploy_stack "${parameters}"; then
     exit
   fi
 
@@ -665,10 +665,10 @@ main() {
   fi
 
   for lambda in "${to_update_as_array[@]}"; do
-    dumb_on_blah="default-bucket-on-$lambda"
-    dumb_on_blah_version=$(get_latest_version "$dumb_on_blah")
+    dumb_on_blah="default-bucket-on-${lambda}"
+    dumb_on_blah_version=$(get_latest_version "${dumb_on_blah}")
     dumb_on_blah_version_friendly="${dumb_on_blah_version//./-}"
-    dumb_on_blah_prefix="$stack_name-On$(kabob_to_pascal "$lambda")_$dumb_on_blah_version_friendly"
+    dumb_on_blah_prefix="$stack_name-On$(kabob_to_pascal "${lambda}")_${dumb_on_blah_version_friendly}"
     the_key="Primary$(kabob_to_pascal "$lambda")EdgeFunctionName"
     parameters=$(jq --arg key "$the_key" --arg value "$dumb_on_blah_prefix" '."\($key)" = $value' <<<"$parameters")
     the_key="Primary$(kabob_to_pascal "$lambda")EdgeFunctionSemanticVersion"

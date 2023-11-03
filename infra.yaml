@@ -448,6 +448,33 @@ Resources:
                   - "${FunctionArn}:${Version}"
                   - FunctionArn: !GetAtt PrimaryOriginResponseEdgeFunction.Arn
                     Version: !GetAtt PrimaryOriginResponseEdgeFunctionVersion.Version
+        CacheBehaviors:
+          - CachePolicyId: !GetAtt PrimaryDistributionCachePolicy.Id
+            AllowedMethods: 
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - PATCH
+              - POST
+              - DELETE
+            Compress: true
+            TargetOriginId: !Ref DefaultBucket
+            ViewerProtocolPolicy: redirect-to-https
+            PathPattern: '/lol'
+            LambdaFunctionAssociations:
+              - EventType: viewer-request
+                IncludeBody: true
+                LambdaFunctionARN: !If
+                  - DoUseAuxiliaryViewerRequestEdgeFunction
+                  - !Sub
+                    - "${FunctionArn}:${Version}"
+                    - FunctionArn: !GetAtt AuxiliaryPrimaryViewerRequestEdgeFunction.Arn
+                      Version: !GetAtt AuxiliaryPrimaryViewerRequestEdgeFunctionVersion.Version
+                  - !Sub
+                    - "${FunctionArn}:${Version}"
+                    - FunctionArn: !GetAtt PrimaryViewerRequestEdgeFunction.Arn
+                      Version: !GetAtt PrimaryViewerRequestEdgeFunctionVersion.Version
         Origins:
           - Id: !Ref DefaultBucket
             S3OriginConfig:
