@@ -1,2 +1,4 @@
 .DS_Store
 scratch*
+lambda-functions/**/latest
+**/.checksum

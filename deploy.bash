@@ -199,7 +199,7 @@ get_latest_version() {
     latest=${version##*/}
   done
   if [ '*' == "$latest" ]; then
-    echo "abr: no versions for function: $function. exiting early..."
+    echo 'null'
     exit
   fi
   echo "$latest"
@@ -299,9 +299,13 @@ upload_lambda_functions() {
     fi
   done < <(find "$here/lambda-functions/." -name '*.js')
 
-  for function in "$here/lambda-functions"/*; do
-    cp -r "$function/$(get_latest_version "${function##*/}")" "$function/latest"
-  done
+  while read -r version; do
+    cp -r "${function}/$(basename "${version}")" "${function}/latest"
+  done < <(find "${here}/lambda-functions" -maxdepth 2 -mindepth 2 -type d)
+
+  # for function in "$here/lambda-functions"/*; do
+  #   cp -r "$function/$(get_latest_version "${function##*/}")" "$function/latest"
+  # done
 }
 
 for_create() {
@@ -429,6 +433,10 @@ main() {
   local -r latest_on_viewer_request_version=$(get_latest_version "$latest_on_viewer_request")
   local -r latest_on_viewer_request_version_friendly="${latest_on_viewer_request_version//./-}"
   local -r latest_on_viewer_request_prefix="$stack_name-OnViewerRequest_$latest_on_viewer_request_version_friendly"
+  local create_latest_on_viewer_request='true'
+  if [ 'null' == "$latest_on_viewer_request_version" ]; then
+    create_latest_on_viewer_request='false'
+  fi
 
   local -r latest_on_response='default-bucket-on-origin-response'
   local -r latest_on_response_version=$(get_latest_version "$latest_on_response")
@@ -455,10 +463,13 @@ main() {
   parameters=$(jq --arg value "$latest_on_origin_request_version" '.AuxiliaryPrimaryOriginRequestEdgeFunctionSemanticVersion = "\($value)"' <<<"$parameters")
   parameters=$(jq --arg value "$latest_on_origin_request_version" '.PrimaryOriginRequestEdgeFunctionSemanticVersion = "\($value)"' <<<"$parameters")
 
-  parameters=$(jq --arg value "$latest_on_viewer_request_prefix-auxiliary" '.AuxiliaryPrimaryViewerRequestEdgeFunctionName = "\($value)"' <<<"$parameters")
-  parameters=$(jq --arg value "$latest_on_viewer_request_prefix" '.PrimaryViewerRequestEdgeFunctionName = "\($value)"' <<<"$parameters")
-  parameters=$(jq --arg value "$latest_on_viewer_request_version" '.AuxiliaryPrimaryViewerRequestEdgeFunctionSemanticVersion = "\($value)"' <<<"$parameters")
-  parameters=$(jq --arg value "$latest_on_viewer_request_version" '.PrimaryViewerRequestEdgeFunctionSemanticVersion = "\($value)"' <<<"$parameters")
+  parameters=$(jq --arg value "$create_latest_on_viewer_request" '.CreateViewerRequestEdgeFunction = "\($value)"' <<<"$parameters")
+  if [ 'false' != "$create_latest_on_viewer_request" ]; then
+    parameters=$(jq --arg value "$latest_on_viewer_request_prefix-auxiliary" '.AuxiliaryPrimaryViewerRequestEdgeFunctionName = "\($value)"' <<<"$parameters")
+    parameters=$(jq --arg value "$latest_on_viewer_request_prefix" '.PrimaryViewerRequestEdgeFunctionName = "\($value)"' <<<"$parameters")
+    parameters=$(jq --arg value "$latest_on_viewer_request_version" '.AuxiliaryPrimaryViewerRequestEdgeFunctionSemanticVersion = "\($value)"' <<<"$parameters")
+    parameters=$(jq --arg value "$latest_on_viewer_request_version" '.PrimaryViewerRequestEdgeFunctionSemanticVersion = "\($value)"' <<<"$parameters")
+  fi
 
   parameters=$(jq --arg value "$latest_on_response_prefix-auxiliary" '.AuxiliaryPrimaryOriginResponseEdgeFunctionName = "\($value)"' <<<"$parameters")
   parameters=$(jq --arg value "$latest_on_response_prefix" '.PrimaryOriginResponseEdgeFunctionName = "\($value)"' <<<"$parameters")
@@ -619,13 +630,17 @@ main() {
       --arg latest_version "${latest_on_origin_request_version}" \
       '.data[.data| length] |= . + { "arn":$arn, "latest_version":$latest_version, "event_type":"origin-request" }' <<<"${edge_lambdas}" \
   )
+
+  if [ 'false' != "$create_latest_on_viewer_request" ]; then
+    edge_lambdas=$( \
+      jq \
+        --arg arn "${viewer_request_lambda_association_arn}" \
+        --arg latest_version "${latest_on_viewer_request_version}" \
+        '.data[.data| length] |= . + { "arn":$arn, "latest_version":$latest_version, "event_type":"viewer-request" }' <<<"${edge_lambdas}" \
+    )
+  fi
+
   edge_lambdas=$( \
-    jq \
-      --arg arn "${viewer_request_lambda_association_arn}" \
-      --arg latest_version "${latest_on_viewer_request_version}" \
-      '.data[.data| length] |= . + { "arn":$arn, "latest_version":$latest_version, "event_type":"viewer-request" }' <<<"${edge_lambdas}" \
-  )
- edge_lambdas=$( \
     jq \
       --arg arn "${origin_response_lambda_association_arn}" \
       --arg latest_version "${latest_on_response_version}" \

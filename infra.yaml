@@ -53,6 +53,13 @@ Parameters:
       - 'true'
       - 'false'
 
+  CreateViewerRequestEdgeFunction:
+    Default: 'false'
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+
   PrimaryDistributionExists:
     Default: 'false'
     Type: String
@@ -138,9 +145,21 @@ Conditions:
     - 'true'
     - !Ref UseAuxiliaryOriginRequestEdgeFunction
 
-  DoUseAuxiliaryViewerRequestEdgeFunction: !Equals
-    - 'true'
-    - !Ref UseAuxiliaryViewerRequestEdgeFunction
+  DoCreateViewerRequestEdgeFunction: !And
+    - !Equals
+      - 'true'
+      - !Ref CreateViewerRequestEdgeFunction
+    - !Equals
+      - 'false'
+      - !Ref IsFirstRun
+
+  DoUseAuxiliaryViewerRequestEdgeFunction: !And
+    - !Equals
+      - 'true'
+      - !Ref UseAuxiliaryViewerRequestEdgeFunction
+    - !Equals
+      - 'true'
+      - !Ref CreateViewerRequestEdgeFunction
 
   DoUseAuxiliaryOriginResponseEdgeFunction: !Equals
     - 'true'
@@ -412,42 +431,66 @@ Resources:
           Compress: true
           TargetOriginId: !Ref DefaultBucket
           ViewerProtocolPolicy: redirect-to-https
-          LambdaFunctionAssociations:
-            - EventType: viewer-request
-              IncludeBody: true
-              LambdaFunctionARN: !If
-                - DoUseAuxiliaryViewerRequestEdgeFunction
-                - !Sub
-                  - "${FunctionArn}:${Version}"
-                  - FunctionArn: !GetAtt AuxiliaryPrimaryViewerRequestEdgeFunction.Arn
-                    Version: !GetAtt AuxiliaryPrimaryViewerRequestEdgeFunctionVersion.Version
-                - !Sub
-                  - "${FunctionArn}:${Version}"
-                  - FunctionArn: !GetAtt PrimaryViewerRequestEdgeFunction.Arn
-                    Version: !GetAtt PrimaryViewerRequestEdgeFunctionVersion.Version
-            - EventType: origin-request
-              IncludeBody: true
-              LambdaFunctionARN: !If
-                - DoUseAuxiliaryOriginRequestEdgeFunction
-                - !Sub
-                  - "${FunctionArn}:${Version}"
-                  - FunctionArn: !GetAtt AuxiliaryPrimaryOriginRequestEdgeFunction.Arn
-                    Version: !GetAtt AuxiliaryPrimaryOriginRequestEdgeFunctionVersion.Version
-                - !Sub
-                  - "${FunctionArn}:${Version}"
-                  - FunctionArn: !GetAtt PrimaryOriginRequestEdgeFunction.Arn
-                    Version: !GetAtt PrimaryOriginRequestEdgeFunctionVersion.Version
-            - EventType: origin-response
-              LambdaFunctionARN: !If
-                - DoUseAuxiliaryOriginResponseEdgeFunction
-                - !Sub
-                  - "${FunctionArn}:${Version}"
-                  - FunctionArn: !GetAtt AuxiliaryPrimaryOriginResponseEdgeFunction.Arn
-                    Version: !GetAtt AuxiliaryPrimaryOriginResponseEdgeFunctionVersion.Version
-                - !Sub
-                  - "${FunctionArn}:${Version}"
-                  - FunctionArn: !GetAtt PrimaryOriginResponseEdgeFunction.Arn
-                    Version: !GetAtt PrimaryOriginResponseEdgeFunctionVersion.Version
+          LambdaFunctionAssociations: !If
+            - DoCreateViewerRequestEdgeFunction
+            - - EventType: viewer-request
+                IncludeBody: true
+                LambdaFunctionARN: !If
+                  - DoUseAuxiliaryViewerRequestEdgeFunction
+                  - !Sub
+                    - "${FunctionArn}:${Version}"
+                    - FunctionArn: !GetAtt AuxiliaryPrimaryViewerRequestEdgeFunction.Arn
+                      Version: !GetAtt AuxiliaryPrimaryViewerRequestEdgeFunctionVersion.Version
+                  - !Sub
+                    - "${FunctionArn}:${Version}"
+                    - FunctionArn: !GetAtt PrimaryViewerRequestEdgeFunction.Arn
+                      Version: !GetAtt PrimaryViewerRequestEdgeFunctionVersion.Version
+              - EventType: origin-request
+                IncludeBody: true
+                LambdaFunctionARN: !If
+                  - DoUseAuxiliaryOriginRequestEdgeFunction
+                  - !Sub
+                    - "${FunctionArn}:${Version}"
+                    - FunctionArn: !GetAtt AuxiliaryPrimaryOriginRequestEdgeFunction.Arn
+                      Version: !GetAtt AuxiliaryPrimaryOriginRequestEdgeFunctionVersion.Version
+                  - !Sub
+                    - "${FunctionArn}:${Version}"
+                    - FunctionArn: !GetAtt PrimaryOriginRequestEdgeFunction.Arn
+                      Version: !GetAtt PrimaryOriginRequestEdgeFunctionVersion.Version
+              - EventType: origin-response
+                LambdaFunctionARN: !If
+                  - DoUseAuxiliaryOriginResponseEdgeFunction
+                  - !Sub
+                    - "${FunctionArn}:${Version}"
+                    - FunctionArn: !GetAtt AuxiliaryPrimaryOriginResponseEdgeFunction.Arn
+                      Version: !GetAtt AuxiliaryPrimaryOriginResponseEdgeFunctionVersion.Version
+                  - !Sub
+                    - "${FunctionArn}:${Version}"
+                    - FunctionArn: !GetAtt PrimaryOriginResponseEdgeFunction.Arn
+                      Version: !GetAtt PrimaryOriginResponseEdgeFunctionVersion.Version
+            - - EventType: origin-request
+                IncludeBody: true
+                LambdaFunctionARN: !If
+                  - DoUseAuxiliaryOriginRequestEdgeFunction
+                  - !Sub
+                    - "${FunctionArn}:${Version}"
+                    - FunctionArn: !GetAtt AuxiliaryPrimaryOriginRequestEdgeFunction.Arn
+                      Version: !GetAtt AuxiliaryPrimaryOriginRequestEdgeFunctionVersion.Version
+                  - !Sub
+                    - "${FunctionArn}:${Version}"
+                    - FunctionArn: !GetAtt PrimaryOriginRequestEdgeFunction.Arn
+                      Version: !GetAtt PrimaryOriginRequestEdgeFunctionVersion.Version
+              - EventType: origin-response
+                LambdaFunctionARN: !If
+                  - DoUseAuxiliaryOriginResponseEdgeFunction
+                  - !Sub
+                    - "${FunctionArn}:${Version}"
+                    - FunctionArn: !GetAtt AuxiliaryPrimaryOriginResponseEdgeFunction.Arn
+                      Version: !GetAtt AuxiliaryPrimaryOriginResponseEdgeFunctionVersion.Version
+                  - !Sub
+                    - "${FunctionArn}:${Version}"
+                    - FunctionArn: !GetAtt PrimaryOriginResponseEdgeFunction.Arn
+                      Version: !GetAtt PrimaryOriginResponseEdgeFunctionVersion.Version
         CacheBehaviors:
           - CachePolicyId: !GetAtt PrimaryDistributionCachePolicy.Id
             AllowedMethods: 
@@ -462,19 +505,21 @@ Resources:
             TargetOriginId: !Ref DefaultBucket
             ViewerProtocolPolicy: redirect-to-https
             PathPattern: '/lol'
-            LambdaFunctionAssociations:
-              - EventType: viewer-request
-                IncludeBody: true
-                LambdaFunctionARN: !If
-                  - DoUseAuxiliaryViewerRequestEdgeFunction
-                  - !Sub
-                    - "${FunctionArn}:${Version}"
-                    - FunctionArn: !GetAtt AuxiliaryPrimaryViewerRequestEdgeFunction.Arn
-                      Version: !GetAtt AuxiliaryPrimaryViewerRequestEdgeFunctionVersion.Version
-                  - !Sub
-                    - "${FunctionArn}:${Version}"
-                    - FunctionArn: !GetAtt PrimaryViewerRequestEdgeFunction.Arn
-                      Version: !GetAtt PrimaryViewerRequestEdgeFunctionVersion.Version
+            LambdaFunctionAssociations: !If
+              - DoCreateViewerRequestEdgeFunction
+              - - EventType: viewer-request
+                  IncludeBody: true
+                  LambdaFunctionARN: !If
+                    - DoUseAuxiliaryViewerRequestEdgeFunction
+                    - !Sub
+                      - "${FunctionArn}:${Version}"
+                      - FunctionArn: !GetAtt AuxiliaryPrimaryViewerRequestEdgeFunction.Arn
+                        Version: !GetAtt AuxiliaryPrimaryViewerRequestEdgeFunctionVersion.Version
+                    - !Sub
+                      - "${FunctionArn}:${Version}"
+                      - FunctionArn: !GetAtt PrimaryViewerRequestEdgeFunction.Arn
+                        Version: !GetAtt PrimaryViewerRequestEdgeFunctionVersion.Version
+              - !Ref 'AWS::NoValue'
         Origins:
           - Id: !Ref DefaultBucket
             S3OriginConfig:
@@ -623,7 +668,7 @@ Resources:
 
   PrimaryViewerRequestEdgeFunction:
     Type: AWS::Lambda::Function
-    Condition: IsNotFirstRun
+    Condition: DoCreateViewerRequestEdgeFunction
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -639,7 +684,7 @@ Resources:
 
   PrimaryViewerRequestEdgeFunctionVersion:
     Type: AWS::Lambda::Version
-    Condition: IsNotFirstRun
+    Condition: DoCreateViewerRequestEdgeFunction
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
@@ -706,6 +751,7 @@ Resources:
 
   PrimaryViewerRequestEdgeFunctionRole:
     Type: AWS::IAM::Role
+    Condition: DoCreateViewerRequestEdgeFunction
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
