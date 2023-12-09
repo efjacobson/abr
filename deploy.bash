@@ -105,19 +105,20 @@ get_deploy_template() {
     return 0
   fi
 
+  local AWSCloudFrontCachePolicy_output_GetAtt_fields=('Id' 'LastModifiedTime')
   local AWSCloudFrontCloudFrontOriginAccessIdentity_output_GetAtt_fields=('Id' 'S3CanonicalUserId')
   local AWSCloudFrontDistribution_output_GetAtt_fields=('DomainName' 'Id')
+  local AWSCloudFrontOriginAccessControl_output_GetAtt_fields=('Id')
+  local AWSCloudFrontOriginRequestPolicy_output_GetAtt_fields=('Id' 'LastModifiedTime')
+  local AWSCloudFrontResponseHeadersPolicy_output_GetAtt_fields=('Id' 'LastModifiedTime')
   local AWSIAMRole_output_GetAtt_fields=('Arn' 'RoleId')
-  local AWSRoute53HostedZone_output_GetAtt_fields=('Id')
+  local AWSIAMUser_output_GetAtt_fields=('Arn')
   local AWSLambdaFunction_output_GetAtt_fields=('Arn')
   local AWSLambdaVersion_output_GetAtt_fields=('Version')
   local AWSLogsLogGroup_output_GetAtt_fields=('Arn')
-  local AWSCloudFrontResponseHeadersPolicy_output_GetAtt_fields=('Id' 'LastModifiedTime')
-  local AWSIAMUser_output_GetAtt_fields=('Arn')
+  local AWSRoute53HostedZone_output_GetAtt_fields=('Id')
   local AWSS3Bucket_output_GetAtt_fields=('Arn' 'DomainName' 'DualStackDomainName' 'RegionalDomainName' 'WebsiteURL')
   local AWSServerlessFunction_output_GetAtt_fields=('Arn')
-  local AWSCloudFrontOriginAccessControl_output_GetAtt_fields=('Id')
-  local AWSCloudFrontCachePolicy_output_GetAtt_fields=('Id' 'LastModifiedTime')
 
   echo '{}' >"$_deploy_template"
   local outputs && outputs=$(echo '{}' | jq)
