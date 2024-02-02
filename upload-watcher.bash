@@ -1,4 +1,4 @@
-#! /bin/bash
+#! /usr/bin/env bash
 
 self="$0"
 here="$(dirname "$(realpath "$self")")"

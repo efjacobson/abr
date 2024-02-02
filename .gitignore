@@ -2,3 +2,4 @@
 scratch*
 lambda-functions/**/latest
 **/.checksum
+.idea

@@ -1,4 +1,4 @@
-#! /bin/bash
+#! /usr/bin/env bash
 
 bucket='default'
 dry_run=true
