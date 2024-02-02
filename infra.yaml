@@ -337,6 +337,40 @@ Resources:
           QueryStringsConfig:
             QueryStringBehavior: 'none'
 
+  WebsiteDistributionOriginRequestPolicy:
+    Type: AWS::CloudFront::OriginRequestPolicy
+    Condition: IsNotFirstRun
+    Properties:
+      OriginRequestPolicyConfig:
+        Name: !Sub "${AWS::StackName}-WebsiteDistributionOriginRequestPolicy"
+        CookiesConfig:
+          CookieBehavior: 'none'
+        HeadersConfig:
+          HeaderBehavior: 'whitelist'
+          Headers:
+            - CloudFront-Is-Desktop-Viewer
+            - CloudFront-Is-Mobile-Viewer
+            - CloudFront-Is-Tablet-Viewer
+        QueryStringsConfig:
+          QueryStringBehavior: 'none'
+
+  PrimaryDistributionOriginRequestPolicy:
+    Type: AWS::CloudFront::OriginRequestPolicy
+    Condition: IsNotFirstRun
+    Properties:
+      OriginRequestPolicyConfig:
+        Name: !Sub "${AWS::StackName}-PrimaryDistributionOriginRequestPolicy"
+        CookiesConfig:
+          CookieBehavior: 'none'
+        HeadersConfig:
+          HeaderBehavior: 'whitelist'
+          Headers:
+            - CloudFront-Is-Desktop-Viewer
+            - CloudFront-Is-Mobile-Viewer
+            - CloudFront-Is-Tablet-Viewer
+        QueryStringsConfig:
+          QueryStringBehavior: 'none'
+
   WebsiteResponseHeadersPolicy:
     Type: AWS::CloudFront::ResponseHeadersPolicy
     Properties:
@@ -395,6 +429,7 @@ Resources:
         DefaultCacheBehavior:
           CachePolicyId: !GetAtt WebsiteDistributionCachePolicy.Id
           Compress: true
+          OriginRequestPolicyId: !GetAtt WebsiteDistributionOriginRequestPolicy.Id
           TargetOriginId: !Ref WebsiteBucket
           ViewerProtocolPolicy: 'redirect-to-https'
           ResponseHeadersPolicyId: !Ref WebsiteResponseHeadersPolicy
@@ -428,6 +463,7 @@ Resources:
           - !Ref "PrimaryHostedZoneName"
         DefaultCacheBehavior:
           CachePolicyId: !GetAtt PrimaryDistributionCachePolicy.Id
+          OriginRequestPolicyId: !GetAtt PrimaryDistributionOriginRequestPolicy.Id
           Compress: true
           TargetOriginId: !Ref DefaultBucket
           ViewerProtocolPolicy: redirect-to-https
