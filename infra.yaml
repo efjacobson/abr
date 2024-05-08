@@ -941,6 +941,20 @@ Resources:
                 Resource: !Ref "AWS::StackId"
                 Action:
                   - cloudformation:DescribeStacks
+        - PolicyName: CloudFrontAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Resource:
+                  - !Sub
+                    - "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${DistributionId}"
+                    - DistributionId: !GetAtt 'WebsiteDistribution.Id'
+                  - !Sub
+                    - "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${DistributionId}"
+                    - DistributionId: !GetAtt 'PrimaryDistribution.Id'
+                Action:
+                  - cloudfront:GetDistributionConfig
 
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
