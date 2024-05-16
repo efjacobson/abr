@@ -578,7 +578,7 @@ main() {
 
   if [ -z "${list_resources_response}" ]; then
     list_resources_response=$(aws cloudformation list-stack-resources \
-      --region="${region}" \
+      --region "${region}" \
       --profile "${profile}" \
       --stack "${stack_name}" | sed '/^$/d')
     if [ -n "$(jq '.' <<<"${list_resources_response}" 2>&1 1>/dev/null | sed '/^$/d')" ]; then
@@ -596,7 +596,7 @@ main() {
     fi
     did_deploy='true'
     list_resources_response=$(aws cloudformation list-stack-resources \
-      --region="${region}" \
+      --region "${region}" \
       --profile "${profile}" \
       --stack "${stack_name}" | sed '/^$/d')
     if [ -n "$(jq '.' <<<"${list_resources_response}" 2>&1 1>/dev/null | sed '/^$/d')" ]; then
