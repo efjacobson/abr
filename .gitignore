@@ -3,3 +3,10 @@ scratch*
 lambda-functions/**/latest
 **/.checksum
 .idea
+.env
+v2/site/origin/images/*
+!v2/site/origin/images/.gitkeep
+v2/site/origin/video/*
+!v2/site/origin/video/.gitkeep
+v2/site/origin/favicon.ico
+v2/site/origin/images.json
