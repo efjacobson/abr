@@ -1,4 +1,5 @@
 #! /usr/bin/env bash
+set -e
 # set -x
 
 self="${BASH_SOURCE[0]}"

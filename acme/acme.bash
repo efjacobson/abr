@@ -1,4 +1,5 @@
 #! /usr/bin/env bash
+set -e
 
 profile='personal'
 region='us-east-1'

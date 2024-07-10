@@ -1,4 +1,5 @@
 #! /usr/bin/env bash
+set -e
 
 self="${BASH_SOURCE[0]}"
 while [ -L "${self}" ]; do

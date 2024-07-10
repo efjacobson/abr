@@ -1,4 +1,5 @@
 #! /usr/bin/env bash
+set -e
 
 commands=('yq' 'zip')
 for command in "${commands[@]}"; do

@@ -1,4 +1,5 @@
 #! /usr/bin/env bash
+set -e
 
 if ! [ -x "$(command -v jq)" ]; then
   echo 'exiting early: jq not installed'
