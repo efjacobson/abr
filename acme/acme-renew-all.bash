@@ -8,6 +8,7 @@ tld=
 display_help() {
   echo "
 Available options:
+    --whoareyou The user to run as
     --domain    The domain to use
     --tld       The TLD to use
     --yolo      Skip all confirmations
@@ -17,6 +18,9 @@ Available options:
 
 for opt in "$@"; do
   case ${opt} in
+  --whoareyou=*)
+    whoareyou="${opt#*=}"
+    ;;
   --yolo)
     yolo='true'
     ;;
@@ -37,6 +41,10 @@ for opt in "$@"; do
   esac
 done
 
+required_args=('whoareyou' 'domain' 'tld')
+for arg in "${required_args[@]}"; do
+  [ -z "${!arg}" ] && echo "${arg} is required" && exit 1
+done
 
 self="${BASH_SOURCE[0]}"
 while [ -L "${self}" ]; do
@@ -68,7 +76,7 @@ for subdomain in "${subdomains[@]}"; do
     sites+=("${subdomain}.${domain}.${tld}")
 done
 
-cmd="${selfdir}/acme-renew.bash --sites=$(IFS=','; echo "${sites[*]}")"
+cmd="${selfdir}/acme-renew.bash --whoareyou=${whoareyou} --sites=$(IFS=','; echo "${sites[*]}")"
 
 if [ "${yolo}" == 'true' ]; then
   cmd="${cmd} --yolo"

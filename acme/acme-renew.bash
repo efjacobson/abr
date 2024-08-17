@@ -52,10 +52,10 @@ for opt in "$@"; do
   esac
 done
 
-if [ -z "${whoareyou}" ]; then
-  echo "who are you?"
-  exit 1
-fi
+required_args=('whoareyou')
+for arg in "${required_args[@]}"; do
+  [ -z "${!arg}" ] && echo "${arg} is required" && exit 1
+done
 
 if [ "${yolo}" != 'true' ]; then
   while true; do
@@ -118,6 +118,12 @@ for site in "${sites[@]}"; do
   fi
 
   runuser -u acme -- /etc/acme/.acme.sh/acme.sh --renew -d "${site}" --force
+  if [ -e "/etc/nginx/ssl/${site}/${site}.key" ]; then
+    mv "/etc/nginx/ssl/${site}/${site}.key" "/etc/nginx/ssl/${site}/${site}.key.bak"
+  fi
+  if [ -e "/etc/nginx/ssl/${site}/${site}.cer" ]; then
+    mv "/etc/nginx/ssl/${site}/${site}.cer" "/etc/nginx/ssl/${site}/${site}.cer.bak"
+  fi
   ln -s "/etc/acme/.acme.sh/${site}_ecc/${site}.key" "/etc/nginx/ssl/${site}/${site}.key"
   ln -s "/etc/acme/.acme.sh/${site}_ecc/${site}.cer" "/etc/nginx/ssl/${site}/${site}.cer"
 
@@ -127,7 +133,7 @@ for site in "${sites[@]}"; do
   echo 'EMPTY PASSWORD'
   echo ''
 
-  runuser -u acme -- /etc/acme/.acme.sh/acme.sh --to-pkcs12 -d "${site}"
+  runuser -u acme -- /etc/acme/.acme.sh/acme.sh --to-pkcs12 -d "${site}" --force
   openssl pkcs12 -export -out "/etc/acme/.acme.sh/${site}_ecc/${site}.p12" \
     -certpbe AES-256-CBC \
     -keypbe AES-256-CBC \
@@ -140,6 +146,13 @@ for site in "${sites[@]}"; do
   7z a "/home/${whoareyou}/${site}_ecc.7z" "/etc/acme/.acme.sh/${site}_ecc"
   chown "${whoareyou}:${whoareyou}" "/home/${whoareyou}/${site}_ecc.7z"
   mv "/home/${whoareyou}/${site}_ecc.7z" "/home/${whoareyou}/certs/"
+
+  if [ -e "/etc/nginx/ssl/${site}/${site}.key.bak" ]; then
+    rm "/etc/nginx/ssl/${site}/${site}.key.bak"
+  fi
+  if [ -e "/etc/nginx/ssl/${site}/${site}.cer.bak" ]; then
+    rm "/etc/nginx/ssl/${site}/${site}.cer.bak"
+  fi
 done
 
 echo ''
