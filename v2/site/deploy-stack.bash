@@ -16,6 +16,13 @@ if [ -e "${selfdir}/.env" ]; then
     set +a
 fi
 
+for evar in 'ABR_REGION' 'ABR_PROFILE' 'ABR_STACK_NAME' 'ABR_SITE_DOMAIN_NAME'; do
+    if [ -z "${!evar}" ]; then
+        echo "Environment variable ${evar} is not set"
+        exit 1
+    fi
+done
+
 parameter_overrides="$(jq '.' <<< "[\"SiteDomainName=${ABR_SITE_DOMAIN_NAME}\"]")"
 deploy() {
     aws cloudformation deploy \
@@ -27,7 +34,7 @@ deploy() {
         --parameter-overrides "$(jq -c '.' <<< "${parameter_overrides}")"
 }
 
-if ! [ "$(
+if [ "$(
 
 aws cloudformation describe-stacks \
     --region "${ABR_REGION}" \
@@ -35,31 +42,29 @@ aws cloudformation describe-stacks \
     --stack-name "${ABR_STACK_NAME}"
 
 )" ]; then
-    deploy
+    while read -r resource; do
+        id="$(jq -r '.LogicalResourceId' <<< "${resource}")"
+        type="$(jq -r '.ResourceType' <<< "${resource}")"
+        case "${type}" in
+            'AWS::CloudFront::Distribution')
+                if [ "${id}" == "OriginDistribution" ]; then
+                    parameter_overrides="$(jq '. += ["OriginDistributionExists=true"]' <<< "${parameter_overrides}")"
+                fi
+                ;;
+            'AWS::S3::Bucket')
+                if [ "${id}" == "OriginBucket" ]; then
+                    parameter_overrides="$(jq '. += ["OriginBucketExists=true"]' <<< "${parameter_overrides}")"
+                fi
+                ;;
+        esac
+    done < <(
+        aws cloudformation list-stack-resources \
+            --region "${ABR_REGION}" \
+            --profile "${ABR_PROFILE}" \
+            --stack-name "${ABR_STACK_NAME}" \
+            --query 'StackResourceSummaries[?ResourceType==`AWS::CloudFront::Distribution` || ResourceType==`AWS::S3::Bucket`].{LogicalResourceId: LogicalResourceId, ResourceType: ResourceType}' \
+        | jq -c '.[]'
+    )
 fi
-
-while read -r resource; do
-    id="$(jq -r '.LogicalResourceId' <<< "${resource}")"
-    type="$(jq -r '.ResourceType' <<< "${resource}")"
-    case "${type}" in
-        'AWS::CloudFront::Distribution')
-            if [ "${id}" == "OriginDistribution" ]; then
-                parameter_overrides="$(jq '. += ["OriginDistributionExists=true"]' <<< "${parameter_overrides}")"
-            fi
-            ;;
-        'AWS::S3::Bucket')
-            if [ "${id}" == "OriginBucket" ]; then
-                parameter_overrides="$(jq '. += ["OriginBucketExists=true"]' <<< "${parameter_overrides}")"
-            fi
-            ;;
-    esac
-done < <(
-    aws cloudformation list-stack-resources \
-        --region "${ABR_REGION}" \
-        --profile "${ABR_PROFILE}" \
-        --stack-name "${ABR_STACK_NAME}" \
-        --query 'StackResourceSummaries[?ResourceType==`AWS::CloudFront::Distribution` || ResourceType==`AWS::S3::Bucket`].{LogicalResourceId: LogicalResourceId, ResourceType: ResourceType}' \
-    | jq -c '.[]'
-)
 
 deploy

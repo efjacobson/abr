@@ -106,6 +106,7 @@ get_deploy_template() {
     return 0
   fi
 
+  local AWSSecretsManagerSecret_output_GetAtt_fields=('Id')
   local AWSCloudFrontCachePolicy_output_GetAtt_fields=('Id' 'LastModifiedTime')
   local AWSCloudFrontCloudFrontOriginAccessIdentity_output_GetAtt_fields=('Id' 'S3CanonicalUserId')
   local AWSCloudFrontDistribution_output_GetAtt_fields=('DomainName' 'Id')
@@ -147,7 +148,8 @@ get_deploy_template() {
       outputs=$(jq "$GetAtt_filter" <<<"$outputs")
       count=$((count + 1))
     done
-    if [ "$count" == 0 ] && [ 'AWSS3BucketPolicy' != "$config" ] && [ 'AWSLambdaPermission' != "$config" ] && [ 'AWSCertificateManagerCertificate' != "$config" ]; then
+    ignore_regex='AWSIAMAccessKey|AWSS3BucketPolicy|AWSLambdaPermission|AWSCertificateManagerCertificate'
+    if [ "$count" == 0 ] && [[ ! "${config}" =~ $ignore_regex ]]; then
       echo "abr: no config for $config!"
     fi
     local insert_filter=". + {\"Outputs\":$outputs}"

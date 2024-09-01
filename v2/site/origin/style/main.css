@@ -85,7 +85,7 @@ body {
     font-style: normal;
     font-variation-settings:
         "wdth" 100;
-    src: "../fonts/OpenSans-Regular.ttf";
+    src: "../font/OpenSans-Regular.ttf";
 }
 
 @keyframes hypnotoad {

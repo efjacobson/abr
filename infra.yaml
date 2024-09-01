@@ -192,6 +192,26 @@ Resources:
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
 
+  KopiaBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: BucketOwnerFullControl
+      BucketName: !Sub "${AWS::AccountId}-${AWS::StackName}-kopia"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 2
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
   WebsiteBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -217,7 +237,6 @@ Resources:
         RestrictPublicBuckets: true
       WebsiteConfiguration:
         IndexDocument: index.html
-
 
   WebsiteBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -955,6 +974,55 @@ Resources:
                     - DistributionId: !GetAtt 'PrimaryDistribution.Id'
                 Action:
                   - cloudfront:GetDistributionConfig
+
+  KopiaBucketUploaderUser:
+    Type: AWS::IAM::User
+    Properties:
+      Policies:
+        - PolicyName: S3ReadAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Resource: '*'
+                Action: s3:ListAllMyBuckets
+              - Effect: Allow
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:s3:::${Bucket}"
+                  - Bucket: !Ref "KopiaBucket"
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+              - Effect: Allow
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:s3:::${Bucket}/*"
+                  - Bucket: !Ref "KopiaBucket"
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectAcl
+        - PolicyName: S3WriteAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Resource: !Sub
+                  - "arn:${AWS::Partition}:s3:::${Bucket}/*"
+                  - Bucket: !Ref "KopiaBucket"
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectAcl
+                  - s3:DeleteObject
+
+  KopiaBucketUploaderAccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName: !Ref KopiaBucketUploaderUser
+
+  KopiaBucketUploaderAccessKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${AWS::StackName}-KopiaBucketUploaderAccessKeySecret"
+      SecretString: !Sub '{"ACCESS_KEY": "${KopiaBucketUploaderAccessKey}", "SECRET_KEY": "${KopiaBucketUploaderAccessKey.SecretAccessKey}"}'
 
   # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 

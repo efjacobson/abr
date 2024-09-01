@@ -1,5 +1,4 @@
 #! /usr/bin/env bash
-set -e
 # set -x
 
 self="${BASH_SOURCE[0]}"
@@ -16,6 +15,13 @@ if [ -e "${selfdir}/.env" ]; then
     source "${selfdir}/.env"
     set +a
 fi
+
+for evar in 'ABR_REGION' 'ABR_PROFILE' 'ABR_STACK_NAME' 'ABR_SITE_DOMAIN_NAME'; do
+    if [ -z "${!evar}" ]; then
+        echo "Environment variable ${evar} is not set"
+        exit 1
+    fi
+done
 
 origin_bucket_arn=
 while read -r id; do
@@ -67,6 +73,7 @@ fi
 
 mime_type() {
     local path="${1}"
+    local extension
     extension="${path##*.}"
     if [ 'css' == "${extension}" ]; then
         echo 'text/css'
@@ -89,11 +96,21 @@ mime_type() {
     fi
 }
 
+while read -r tpl; do
+        dest="${tpl%.*}"
+        envsubst < "${tpl}" > "${dest}"
+done < <(find "${selfdir}/origin" -type f -name "*.tpl")
+
 images_json_key='images.json'
 invalidation_paths=()
 while read -r path; do
     key="${path/$selfdir\/origin\//}"
     if [ "${key}" == "${images_json_key}" ]; then
+        continue
+    fi
+
+    extension="${path##*.}"
+    if [ "${extension}" == 'tpl' ]; then
         continue
     fi
 
@@ -121,12 +138,17 @@ while read -r path; do
 
 done < <(find "${selfdir}/origin" -type f)
 
+while read -r tpl; do
+        dest="${tpl%.*}"
+        rm "${dest}"
+done < <(find "${selfdir}/origin" -type f -name "*.tpl")
+
 images_json_path="${selfdir}/origin/${images_json_key}"
 aws s3api list-objects-v2 \
     --bucket "${bucket}" \
     --profile "${ABR_PROFILE}" \
     --query 'Contents[?Size > `0`].Key' \
-    --prefix 'images/' | jq '. | map(select(. | test(".optimized.jpg$")))' > "${images_json_path}"
+    --prefix 'image/' | jq '. | map(select(. | test(".optimized.jpg$")))' > "${images_json_path}"
 
 local_etag="$(md5sum "${images_json_path}" | cut -d ' ' -f 1)"
 aws_etag="$(
@@ -153,7 +175,9 @@ for path in "${invalidation_paths[@]}"; do
     paths="${paths} /${path}"
 done
 
-aws cloudfront create-invalidation \
-    --distribution-id "${origin_distribution_id}" \
-    --paths $paths \
-    --profile "${ABR_PROFILE}"
+echo "paths needing invalidation: ${paths}"
+
+# aws cloudfront create-invalidation \
+#     --distribution-id "${origin_distribution_id}" \
+#     --paths $paths \
+#     --profile "${ABR_PROFILE}"

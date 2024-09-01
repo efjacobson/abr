@@ -1,3 +1,10 @@
+exif data removed like so:
+
+```
+file='/path/to/file'
+exiftool -all= --icc_profile:all "${file}"
+```
+
 the asset filenames were generated like so:
 
 ```

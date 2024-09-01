@@ -261,8 +261,12 @@ Resources:
       Code:
         ZipFile: |
           exports.handler = (event, context, callback) => {
-            const request = event.Records[0].cf.request;
             const response = event.Records[0].cf.response;
+            if (response.status !== '200') {
+              callback(null, response);
+              return;
+            }
+            const request = event.Records[0].cf.request;
             let maxAge = 60 * 60;
             switch (request.uri.split('.').pop()) {
               case 'jpg':
