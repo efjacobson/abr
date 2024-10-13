@@ -62,7 +62,14 @@ Resources:
       LifecycleConfiguration:
         Rules:
           - Status: 'Enabled'
-            ExpirationInDays: 30
+            ExpirationInDays: 1
+          - Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 2
+          - Status: Enabled
+            Transitions:
+              - StorageClass: INTELLIGENT_TIERING
+                TransitionInDays: 0
       OwnershipControls:
         Rules:
           - ObjectOwnership: 'BucketOwnerPreferred'
@@ -101,6 +108,15 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: 'AES256'
+      LifecycleConfiguration:
+        Rules:
+          - Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 2
+          - Status: Enabled
+            Transitions:
+              - StorageClass: INTELLIGENT_TIERING
+                TransitionInDays: 0
       LoggingConfiguration:
         DestinationBucketName: !Ref 'LogsBucket'
         LogFilePrefix: 'origin/'

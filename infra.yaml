@@ -186,6 +186,10 @@ Resources:
           - Status: Enabled
             AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 2
+          - Status: Enabled
+            Transitions:
+              - StorageClass: INTELLIGENT_TIERING
+                TransitionInDays: 0
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -195,7 +199,6 @@ Resources:
   KopiaBucket:
     Type: AWS::S3::Bucket
     Properties:
-      AccessControl: BucketOwnerFullControl
       BucketName: !Sub "${AWS::AccountId}-${AWS::StackName}-kopia"
       BucketEncryption:
         ServerSideEncryptionConfiguration:
@@ -206,11 +209,10 @@ Resources:
           - Status: Enabled
             AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 2
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
+          - Status: Enabled
+            Transitions:
+              - StorageClass: INTELLIGENT_TIERING
+                TransitionInDays: 0
 
   WebsiteBucket:
     Type: AWS::S3::Bucket
@@ -230,6 +232,10 @@ Resources:
           - Status: Enabled
             AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 2
+          - Status: Enabled
+            Transitions:
+              - StorageClass: INTELLIGENT_TIERING
+                TransitionInDays: 0
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -275,6 +281,10 @@ Resources:
           - Status: Enabled
             AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 2
+          - Status: Enabled
+            Transitions:
+              - StorageClass: INTELLIGENT_TIERING
+                TransitionInDays: 0
       NotificationConfiguration: !If
         - DefaultBucketObjectCreatedFunctionArnDoesNotExist
         - !Ref 'AWS::NoValue'
@@ -1019,6 +1029,8 @@ Resources:
       UserName: !Ref KopiaBucketUploaderUser
 
   KopiaBucketUploaderAccessKeySecret:
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
     Type: AWS::SecretsManager::Secret
     Properties:
       Name: !Sub "${AWS::StackName}-KopiaBucketUploaderAccessKeySecret"
