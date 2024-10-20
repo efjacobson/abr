@@ -75,7 +75,7 @@ main() {
   fi
 
   if [ ! -f "$src" ]; then
-    echo 'src is not a file'
+    echo "src is not a file. value submitted: ${src}"
     exit
   fi
 
