@@ -110,7 +110,7 @@ main() {
   alias=$(get_distribution_alias "$(get_distribution_nickname "${dest}")")
 
   if [ 'An error occurred (404) when calling the HeadObject operation: Not Found' == "${head_object_response}" ]; then
-    args=( s3api put-object --bucket "${bucket_name}" --key "${key}" --body "$(realpath "${src}")" --checksum-sha256 "${checksum}" --content-type "$(file --mime-type "${src}" | cut -d' ' -f2)" --profile "${profile}" )
+    args=( s3api put-object --bucket "${bucket_name}" --key "${key}" --body "$(realpath "${src}")" --checksum-sha256 "${checksum}" --content-type "$(file --mime-type "${src}" | rev | cut -d ':' -f 1 | rev)" --profile "${profile}" )
     cmd=( aws "${args[@]}" )
 
     if [ "${dry_run}" == 'true' ]; then
