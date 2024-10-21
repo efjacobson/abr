@@ -4,7 +4,7 @@ set -e
 here="$(dirname "$(realpath "$0")")"
 stack='abr'
 dest=Default
-dry_run=true
+dry_run='true'
 profile=
 
 display_help() {
@@ -25,7 +25,7 @@ parse_arguments() {
     case ${opt} in
     --dry-run=*)
       if [ 'false' == "${opt#*=}" ]; then
-        dry_run=false
+        dry_run='false'
       fi
       ;;
     --stack=*)
@@ -35,7 +35,7 @@ parse_arguments() {
       key="${opt#*=}"
       ;;
     --hot)
-      dry_run=false
+      dry_run='false'
       ;;
     --dest=*)
       dest="${opt#*=}"
@@ -69,17 +69,17 @@ main() {
     exit
   fi
 
-  if [ '' == "$src" ]; then
+  if [ '' == "${src}" ]; then
     echo 'a path to the src is required'
     exit
   fi
 
-  if [ ! -f "$src" ]; then
+  if [ ! -f "${src}" ]; then
     echo "src is not a file. value submitted: ${src}"
     exit
   fi
 
-  if [ -z "$key" ]; then
+  if [ -z "${key}" ]; then
     key="$(basename "$src")"
   fi
 
@@ -89,84 +89,55 @@ main() {
   fi
 
   # shellcheck source=/dev/null
-  source "$here/shared.bash" "$stack"
+  source "${here}/shared.bash" "${stack}"
 
   bucket_name=$(get_bucket_name "${dest}")
 
-  if [ 'null' == "$bucket_name" ]; then
+  if [ 'null' == "${bucket_name}" ]; then
     echo 'unable to determine bucket name'
     exit
   fi
 
-  checksum="$(openssl dgst -sha256 -binary "$src" | openssl enc -base64)"
+  checksum="$(openssl dgst -sha256 -binary "${src}" | openssl enc -base64)"
 
   head_object_response=$(aws s3api head-object \
-    --bucket "$bucket_name" \
-    --key "$key" \
+    --bucket "${bucket_name}" \
+    --key "${key}" \
     --checksum-mode ENABLED \
-    --profile "$profile" 2>&1 | sed '/^$/d')
+    --profile "${profile}" 2>&1 | sed '/^$/d')
   
-  domain_name=$(get_distribution_domain_name $(get_distribution_nickname "${dest}"))
-  alias=$(get_distribution_alias $(get_distribution_nickname "${dest}"))
+  domain_name=$(get_distribution_domain_name "$(get_distribution_nickname "${dest}")")
+  alias=$(get_distribution_alias "$(get_distribution_nickname "${dest}")")
 
-  if [ 'An error occurred (404) when calling the HeadObject operation: Not Found' == "$head_object_response" ]; then
-    cmd="aws s3api put-object \
-      --bucket $bucket_name \
-      --key "$key" \
-      --body $(realpath "$src") \
-      --checksum-sha256 $checksum \
-      --content-type $(file --mime-type "$src" | cut -d' ' -f2) \
-      --profile $profile"
-    $dry_run && echo "dry run: $cmd"
-    $dry_run || eval "$cmd" >>/dev/null
-    echo "abr: uploaded ${src} to s3://$bucket/${key} with sha256 checksum ${checksum}"
-    echo "abr: it is available here: https://${domain_name}/${key}"
-    echo "abr: and here: https://${alias}/${key}"
+  if [ 'An error occurred (404) when calling the HeadObject operation: Not Found' == "${head_object_response}" ]; then
+    args=( s3api put-object --bucket "${bucket_name}" --key "${key}" --body "$(realpath "${src}")" --checksum-sha256 "${checksum}" --content-type "$(file --mime-type "${src}" | cut -d' ' -f2)" --profile "${profile}" )
+    cmd=( aws "${args[@]}" )
+
+    if [ "${dry_run}" == 'true' ]; then
+      echo 'dry run:' && printf '%q ' "${cmd[@]}" && echo ''
+    else
+      "${cmd[@]}"
+      echo "abr: uploaded ${src} to s3://${bucket_name}/${key} with sha256 checksum ${checksum}"
+      echo "abr: it is available here: https://${domain_name}/${key}"
+      echo "abr: and here: https://${alias}/${key}"
+    fi
+
   elif [ "${checksum}" == "$(jq -r '.ChecksumSHA256' <<<"${head_object_response}")" ]; then
     echo 'refusing to upload identical object'
     echo "abr: it is available here: https://${domain_name}/${key}"
     echo "abr: and here: https://${alias}/${key}"
     exit
   else
-    cmd="aws s3api put-object \
-      --bucket $bucket_name \
-      --key "$key" \
-      --body $(realpath "$src") \
-      --checksum-sha256 $checksum \
-      --content-type $(file --mime-type "$src" | cut -d' ' -f2) \
-      --profile $profile"
-    $dry_run && echo "dry run: $cmd"
-    $dry_run || eval "$cmd" >>/dev/null
 
-    # aws s3api put-object \
-    #   --bucket "$bucket_name" \
-    #   --key "$key" \
-    #   --body "$src" \
-    #   --checksum-sha256 "$checksum" \
-    #   --profile "$profile" >>/dev/null
-    echo "abr: uploaded ${src} to s3://$bucket/${key} with sha256 checksum ${checksum}"
-    echo "abr: it is available here: https://${domain_name}/${key}"
-    echo "abr: and here: https://${alias}/${key}"
+    if [ "${dry_run}" == 'true' ]; then
+      echo 'dry run:' && printf '%q ' "${cmd[@]}" && echo ''
+    else
+      "${cmd[@]}"
+      echo "abr: uploaded ${src} to s3://$bucket_name/${key} with sha256 checksum ${checksum}"
+      echo "abr: it is available here: https://${domain_name}/${key}"
+      echo "abr: and here: https://${alias}/${key}"
+    fi
   fi
-
-  #PrimaryDistributionDomainName
-
-  #   if jq -e . >/dev/null 2>&1 <<<"$head_object_response"; then
-  #   echo "$head_object_response"
-  #   echo "$checksum"
-  #       echo 'refusing to upload object that already exists in the bucket'
-  #       exit
-  #   fi
-
-
-  # dest="s3://$bucket_name"
-  # cmd="aws s3 cp $src $dest/$src --profile $profile --checksum-sha256 $checksum"
-
-  # if $dry_run; then
-  #   cmd+=' --dryrun'
-  # fi
-
-  # eval "$cmd"
 }
 
 src="$1"
