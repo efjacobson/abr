@@ -8,11 +8,12 @@ tld=
 display_help() {
   echo "
 Available options:
-    --whoareyou The user to run as
-    --domain    The domain to use
-    --tld       The TLD to use
-    --yolo      Skip all confirmations
-    --help      This message
+    --whoareyou     The user to run as
+    --domain        The domain to use
+    --tld           The TLD to use
+    --yolo          Skip all confirmations
+    --identity_file The identity file to in the resulting scp command
+    --help          This message
 "
 }
 
@@ -30,6 +31,9 @@ for opt in "$@"; do
   --tld=*)
     tld="${opt#*=}"
     ;;
+  --identity_file=*)
+    identity_file="${opt#*=}"
+    ;;
   --help)
     display_help
     exit
@@ -41,7 +45,7 @@ for opt in "$@"; do
   esac
 done
 
-required_args=('whoareyou' 'domain' 'tld')
+required_args=('whoareyou' 'domain' 'tld' 'identity_file')
 for arg in "${required_args[@]}"; do
   [ -z "${!arg}" ] && echo "${arg} is required" && exit 1
 done
@@ -76,7 +80,7 @@ for subdomain in "${subdomains[@]}"; do
     sites+=("${subdomain}.${domain}.${tld}")
 done
 
-cmd="${selfdir}/acme-renew.bash --whoareyou=${whoareyou} --sites=$(IFS=','; echo "${sites[*]}")"
+cmd="${selfdir}/acme-renew.bash --whoareyou=${whoareyou} --identity_file=${identity_file} --sites=$(IFS=','; echo "${sites[*]}")"
 
 if [ "${yolo}" == 'true' ]; then
   cmd="${cmd} --yolo"

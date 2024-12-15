@@ -162,7 +162,7 @@ main() {
         read -r -p "did you remember to update dns? (y/N): " answer
         case "$answer" in
         Y | y)
-          ssh -i "${identity_file}" -t "${whoareyou}@${public_ip}" -o StrictHostKeyChecking=no "sudo /home/${whoareyou}/scripts/acme-renew-all.bash --whoareyou=${whoareyou} --domain=${domain} --tld=${tld} --yolo"
+          ssh -i "${identity_file}" -t "${whoareyou}@${public_ip}" -o StrictHostKeyChecking=no "sudo /home/${whoareyou}/scripts/acme-renew-all.bash --identity_file=${identity_file} --whoareyou=${whoareyou} --domain=${domain} --tld=${tld} --yolo"
           break
           ;;
         *)

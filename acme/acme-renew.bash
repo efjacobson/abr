@@ -11,13 +11,14 @@ sites=()
 display_help() {
   echo "
 Available options:
-    --whoareyou The user to run as
-    --subdomain The subdomain to use
-    --domain    The domain to use
-    --tld       The TLD to use
-    --sites     Comma separated list of sites
-    --yolo      Skip all confirmations
-    --help      This message
+    --whoareyou     The user to run as
+    --subdomain     The subdomain to use
+    --domain        The domain to use
+    --tld           The TLD to use
+    --sites         Comma separated list of sites
+    --yolo          Skip all confirmations
+    --identity_file The identity file to in the resulting scp command
+    --help          This message
 "
 }
 
@@ -34,6 +35,9 @@ for opt in "$@"; do
     ;;
   --tld=*)
     tld="${opt#*=}"
+    ;;
+  --identity_file=*)
+    identity_file="${opt#*=}"
     ;;
   --sites=*)
     IFS=',' read -r -a sites <<< "${opt#*=}"
@@ -52,7 +56,7 @@ for opt in "$@"; do
   esac
 done
 
-required_args=('whoareyou')
+required_args=('whoareyou' 'identity_file')
 for arg in "${required_args[@]}"; do
   [ -z "${!arg}" ] && echo "${arg} is required" && exit 1
 done
@@ -161,7 +165,7 @@ echo ''
 
 7z a "/home/${whoareyou}/certs.7z" "/home/${whoareyou}/certs" -p -mhe=on
 chown "${whoareyou}:${whoareyou}" "/home/${whoareyou}/certs.7z"
-echo "you have 60 seconds to run this command: scp ${whoareyou}@${here_ip}:/home/${whoareyou}/certs.7z ./"
+echo "you have 60 seconds to run this command: scp -i ${identity_file} ${whoareyou}@${here_ip}:/home/${whoareyou}/certs.7z ./"
 
 sleep 60
 rm "/home/${whoareyou}/certs.7z"
