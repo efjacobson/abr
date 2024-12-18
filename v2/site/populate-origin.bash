@@ -177,6 +177,8 @@ done
 
 echo "paths needing invalidation: ${paths}"
 
+# todo: just invalidate the entire distro every time
+
 # aws cloudfront create-invalidation \
 #     --distribution-id "${origin_distribution_id}" \
 #     --paths $paths \

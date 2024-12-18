@@ -1,0 +1,1 @@
+export default () => 'https://$ABR_SITE_DOMAIN_NAME';

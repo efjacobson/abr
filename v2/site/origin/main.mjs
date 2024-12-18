@@ -1,4 +1,7 @@
 import shuffled from './shuffled.mjs';
+import { toOriginal } from './imageUtils.mjs';
+
+// todo: reimplement light dom rendering
 
 const renders = new Map();
 function render(next = shuffled.pop()) {
@@ -30,7 +33,7 @@ function render(next = shuffled.pop()) {
     div.appendChild(img);
 
     const anchor = document.createElement('a');
-    anchor.href = src.replace('.optimized', '');
+    anchor.href = toOriginal(src);
     anchor.target = '_blank';
     anchor.textContent = 'Open high(er) resolution image in new tab';
     div.appendChild(anchor);

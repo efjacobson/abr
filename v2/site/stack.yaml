@@ -273,7 +273,7 @@ Resources:
       FunctionName: !Sub '${AWS::StackName}-origin-response-edge-function'
       Handler: 'index.handler'
       Role: !GetAtt 'OriginResponseEdgeFunctionRole.Arn'
-      Runtime: 'nodejs20.x'
+      Runtime: 'nodejs22.x'
       Code:
         ZipFile: |
           exports.handler = (event, context, callback) => {
@@ -283,18 +283,17 @@ Resources:
               return;
             }
             const request = event.Records[0].cf.request;
-            let maxAge = 60 * 60;
+            let sMaxAge = 60 * 60;
             switch (request.uri.split('.').pop()) {
               case 'jpg':
-              case 'jpeg':
-                maxAge *= 24 * 365;
+                sMaxAge *= 24 * 365;
                 break;
               default:
-                maxAge *= 24 * 7;
+                sMaxAge *= 24 * 7;
             }
             response.headers['cache-control'] = [{
               key: 'Cache-Control',
-              value: `max-age=${maxAge}, public, s-maxage=${maxAge / 2}`,
+              value: `max-age=${sMaxAge / 2}, public, s-maxage=${sMaxAge}`,
             }];
             callback(null, response);
           }

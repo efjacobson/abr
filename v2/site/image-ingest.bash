@@ -90,11 +90,11 @@ step_2() {
         optimized="${step_2_dir}/${filename_without_extension}.optimized.${extension}"
         convert "${file}" -sampling-factor 4:2:0 -strip -quality 85 -interlace Plane -gaussian-blur 0.05 "${optimized}"
 
-        optimized_size="$(du "${optimized}" | cut -f 1)"
-        file_size="$(du "${file}" | cut -f 1)"
+        optimized_size="$(du -b "${optimized}" | cut -f 1)"
+        file_size="$(du -b "${file}" | cut -f 1)"
 
         if [[ "${optimized_size}" -ge "${file_size}" ]]; then
-            mv "${optimized}" "${optimized}.bak"
+            # mv "${optimized}" "${optimized}.bak"
             cp "${file}" "${optimized}"
         fi
     done
