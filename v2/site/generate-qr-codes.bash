@@ -67,11 +67,14 @@ aws s3api list-objects-v2 \
 
 qrcodes="$(jq '.' <<< '{}')"
 while read -r key; do
-    stripped="https://${ABR_SITE_DOMAIN_NAME}/${key/.optimized/}"
+    extension="${key##*.}"
+    key_without_optimized_or_extension="${key%.optimized.${extension}}"
+    original="${key_without_optimized_or_extension}.${extension}"
+    absolute="${ABR_SITE_DOMAIN_NAME}/${original}"
     tmp="$(mktemp).svg"
-    segno "${stripped}" -o "${tmp}"
-    qrcodes="$(jq --arg qrcode "$(base64 -w 0 < "${tmp}")" ".[\"${stripped}\"] = \$qrcode" <<< "${qrcodes}")"
+    segno "${absolute}" -o "${tmp}"
+    qrcodes="$(jq --arg qrcode "$(base64 -w 0 < "${tmp}")" ".[\"${original}\"] = \$qrcode" <<< "${qrcodes}")"
     rm -f "${tmp}"
 done <<< "${optimized_images}"
 
-jq '.' <<< "${qrcodes}" > "${selfdir}/origin/qrcodes.json"
+echo "export default $(jq '.' <<< "${qrcodes}")" > "${selfdir}/origin/qrcodes.mjs"

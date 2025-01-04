@@ -1,65 +1,67 @@
 import shuffled from './shuffled.mjs';
-import { toOriginal } from './imageUtils.mjs';
+import { toAbsolute, toHash, toOptimized, toOriginal } from './imageUtils.mjs';
 
 // todo: reimplement light dom rendering
 
 const renders = new Map();
-function render(next = shuffled.pop()) {
-    if (!next) {
-        performanceObserver.disconnect();
-        intersectionObserver.disconnect();
-        const fin = document.createElement('h2');
-        fin.textContent = 'fin';
-        throbber.parentNode.insertBefore(fin, throbber);
-        throbber.parentNode.removeChild(throbber);
-        return;
-    }
+function render (src = shuffled.pop()) {
+  if (!src) {
+    performanceObserver.disconnect();
+    intersectionObserver.disconnect();
+    const fin = document.createElement('h2');
+    fin.textContent = 'fin';
+    throbber.parentNode.insertBefore(fin, throbber);
+    throbber.parentNode.removeChild(throbber);
+    return;
+  }
 
-    const src = `./${next}`;
-    if (renders.has(src)) {
-        return;
-    }
-    renders.set(src, () => {
-        intersectionObserver.observe(throbber);
-        renders.delete(src);
-    });
+  const hash = toHash(src);
+  if (renders.has(hash)) {
+    return;
+  }
+  renders.set(hash, () => {
+    intersectionObserver.observe(throbber);
+    renders.delete(hash);
+  });
 
-    const div = document.createElement('div');
-    div.className = 'card';
+  const div = document.createElement('div');
+  div.className = 'card';
 
-    const img = document.createElement('img');
-    img.loading = 'lazy';
-    img.src = src;
-    div.appendChild(img);
+  const img = document.createElement('img');
+  img.loading = 'lazy';
+  img.src = toAbsolute(toOptimized(src));
+  div.appendChild(img);
 
-    const anchor = document.createElement('a');
-    anchor.href = toOriginal(src);
-    anchor.target = '_blank';
-    anchor.textContent = 'Open high(er) resolution image in new tab';
-    div.appendChild(anchor);
+  const anchor = document.createElement('a');
+  anchor.href = toAbsolute(toOriginal(src));
+  anchor.target = '_blank';
+  anchor.textContent = 'Open high(er) resolution image in new tab';
+  div.appendChild(anchor);
 
-    throbber.parentNode.insertBefore(div, throbber);
+  throbber.parentNode.insertBefore(div, throbber);
 }
 
-const intersectionObserver = new IntersectionObserver((entries) => {
-    if (!entries[0].isIntersecting) {
-        return;
-    }
-    intersectionObserver.unobserve(throbber);
-    render();
+const intersectionObserver = new window.IntersectionObserver((entries) => {
+  if (!entries[0].isIntersecting) {
+    return;
+  }
+  intersectionObserver.unobserve(throbber);
+  render();
 });
 
 const performanceObserver = new PerformanceObserver((list) => {
-    list.getEntries().forEach((entry) => {
-        const src = `.${new URL(entry.name).pathname}`;
-        if (!renders.has(src)) {
-            return;
-        }
-        renders.get(src)();
-    });
+  list.getEntries().forEach((entry) => {
+    const hash = toHash(entry.name);
+    if (!renders.has(hash)) {
+      return;
+    }
+    renders.get(hash)();
+  });
 });
-performanceObserver.observe({ type: "resource", buffered: true })
+performanceObserver.observe({ type: 'resource', buffered: true });
 
-import('./throbber.mjs').then(({ default: throbber }) => {
-    intersectionObserver.observe(throbber);
+let throbber;
+import('./throbber.mjs').then((module) => {
+  throbber = module.default;
+  intersectionObserver.observe(throbber);
 });

@@ -36,6 +36,12 @@ main() {
     if ! [ -d "${step_2_dir}" ]; then
         step_2
     fi
+
+    step_3_dir="${selfdir}/ingest.3"
+
+    if ! [ -d "${step_3_dir}" ]; then
+        step_3
+    fi
 }
 
 step_0() {
@@ -64,7 +70,9 @@ step_1() {
         esac
         checksumish="$(openssl dgst -sha256 -binary "${file}" | openssl enc -base64 | base64)"
         newfile="${step_1_dir}/${checksumish}.${extension}"
-        mv "${file}" "${newfile}"
+        if [ "${file}" != "${newfile}" ]; then
+            mv "${file}" "${newfile}"
+        fi
     done
 }
 
@@ -88,15 +96,47 @@ step_2() {
         esac
 
         optimized="${step_2_dir}/${filename_without_extension}.optimized.${extension}"
-        convert "${file}" -sampling-factor 4:2:0 -strip -quality 85 -interlace Plane -gaussian-blur 0.05 "${optimized}"
+        magick "${file}" -sampling-factor 4:2:0 -strip -quality 85 -interlace Plane -gaussian-blur 0.05 "${optimized}"
 
         optimized_size="$(du -b "${optimized}" | cut -f 1)"
         file_size="$(du -b "${file}" | cut -f 1)"
 
         if [[ "${optimized_size}" -ge "${file_size}" ]]; then
-            # mv "${optimized}" "${optimized}.bak"
             cp "${file}" "${optimized}"
         fi
+    done
+}
+
+step_3() {
+    cp -r "${step_2_dir}" "${step_3_dir}"
+
+    local filename=
+    local extension=
+    local filename_without_extension=
+    local maybe_optimized=
+    local filename_without_optimized=
+    local thumbnail=
+    for file in "${step_3_dir}"/*; do
+        filename="$(basename -- "$file")"
+        extension="${filename##*.}"
+        filename_without_extension="${filename%.*}"
+        case "${extension}" in
+            jpg|jpeg|png)
+                ;;
+            *)
+                continue
+                ;;
+        esac
+
+        maybe_optimized="${filename_without_extension##*.}"
+        if [ "${maybe_optimized}" != 'optimized' ]; then
+            continue
+        fi
+
+        filename_without_optimized="${filename_without_extension%.*}"
+        thumbnail="${step_3_dir}/${filename_without_optimized}.thumbnail.${extension}"
+
+        magick "${file}" -resize 200x200 "${thumbnail}"
     done
 }
 

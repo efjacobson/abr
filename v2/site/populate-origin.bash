@@ -75,25 +75,35 @@ mime_type() {
     local path="${1}"
     local extension
     extension="${path##*.}"
-    if [ 'css' == "${extension}" ]; then
-        echo 'text/css'
-    elif [ 'html' == "${extension}" ]; then
-        echo 'text/html'
-    elif [ 'js' == "${extension}" ]; then
-        echo 'application/javascript'
-    elif [ 'json' == "${extension}" ]; then
-        echo 'application/json'
-    elif [ 'png' == "${extension}" ]; then
-        echo 'image/png'
-    elif [ 'svg' == "${extension}" ]; then
-        echo 'image/svg+xml'
-    elif [ 'txt' == "${extension}" ]; then
-        echo 'text/plain'
-    elif [ 'xml' == "${extension}" ]; then
-        echo 'application/xml'
-    else
-        file --mime-type "${path}" | cut -d' ' -f2
-    fi
+    case "${extension}" in
+        'css')
+            echo 'text/css'
+            ;;
+        'html')
+            echo 'text/html'
+            ;;
+        'js' | 'mjs')
+            echo 'application/javascript'
+            ;;
+        'json')
+            echo 'text/javascript'
+            ;;
+        'png')
+            echo 'image/png'
+            ;;
+        'svg')
+            echo 'image/svg+xml'
+            ;;
+        'txt')
+            echo 'text/plain'
+            ;;
+        'xml')
+            echo 'application/xml'
+            ;;
+        *)
+            file --mime-type "${path}" | cut -d' ' -f2
+            ;;
+    esac
 }
 
 while read -r tpl; do
@@ -101,11 +111,11 @@ while read -r tpl; do
         envsubst < "${tpl}" > "${dest}"
 done < <(find "${selfdir}/origin" -type f -name "*.tpl")
 
-images_json_key='images.json'
+images_mjs_key='images.mjs'
 invalidation_paths=()
 while read -r path; do
     key="${path/$selfdir\/origin\//}"
-    if [ "${key}" == "${images_json_key}" ]; then
+    if [ "${key}" == "${images_mjs_key}" ]; then
         continue
     fi
 
@@ -127,6 +137,8 @@ while read -r path; do
         invalidation_paths+=("${key}")
     fi
 
+    echo '=============================='
+    echo "path: ${path}"
     checksum="$(openssl dgst -sha256 -binary "${path}" | openssl enc -base64)"
     aws s3api put-object \
         --body "$(realpath "${path}")" \
@@ -135,6 +147,8 @@ while read -r path; do
         --content-type "$(mime_type "${path}")" \
         --key "${key}" \
         --profile "${ABR_PROFILE}"
+    echo '=============================='
+    echo
 
 done < <(find "${selfdir}/origin" -type f)
 
@@ -143,27 +157,43 @@ while read -r tpl; do
         rm "${dest}"
 done < <(find "${selfdir}/origin" -type f -name "*.tpl")
 
-images_json_path="${selfdir}/origin/${images_json_key}"
+images_mjs_path="${selfdir}/origin/${images_mjs_key}"
+
+images_json_optimized="$(
+
 aws s3api list-objects-v2 \
     --bucket "${bucket}" \
     --profile "${ABR_PROFILE}" \
     --query 'Contents[?Size > `0`].Key' \
-    --prefix 'image/' | jq '. | map(select(. | test(".optimized.jpg$")))' > "${images_json_path}"
+    --prefix 'image/' | jq '. | map(select(. | test(".optimized.jpg$")))'
 
-local_etag="$(md5sum "${images_json_path}" | cut -d ' ' -f 1)"
+)"
+
+images_json="$(jq '.' <<< '[]')"
+
+while read -r key; do
+    extension="${key##*.}"
+    key_without_optimized_or_extension="${key%.optimized.${extension}}"
+    original="${key_without_optimized_or_extension}.${extension}"
+    images_json="$(jq --arg original "${original}" '. += [$original]' <<< "${images_json}")"
+done <<< "$(jq -r '.[]' <<< "${images_json_optimized}")"
+
+echo "export default ${images_json}" > "${images_mjs_path}"
+
+local_etag="$(md5sum "${images_mjs_path}" | cut -d ' ' -f 1)"
 aws_etag="$(
-    curl -sI "https://${ABR_SITE_DOMAIN_NAME}/${images_json_key}" | grep etag | cut -d ' ' -f 2 | cut -d '"' -f 2
+    curl -sI "https://${ABR_SITE_DOMAIN_NAME}/${images_mjs_key}" | grep etag | cut -d ' ' -f 2 | cut -d '"' -f 2
 )"
 
 if [ "${local_etag}" != "${aws_etag}" ]; then
     aws s3api put-object \
-        --body "${images_json_path}" \
+        --body "${images_mjs_path}" \
         --bucket "${bucket}" \
-        --checksum-sha256 "$(openssl dgst -sha256 -binary "${images_json_path}" | openssl enc -base64)" \
-        --content-type "$(mime_type "${images_json_path}")" \
-        --key "${images_json_key}" \
+        --checksum-sha256 "$(openssl dgst -sha256 -binary "${images_mjs_path}" | openssl enc -base64)" \
+        --content-type "$(mime_type "${images_mjs_path}")" \
+        --key "${images_mjs_key}" \
         --profile "${ABR_PROFILE}"
-    invalidation_paths+=("${images_json_key}")
+    invalidation_paths+=("${images_mjs_key}")
 fi
 
 if [ ${#invalidation_paths[@]} -eq 0 ]; then
@@ -177,9 +207,7 @@ done
 
 echo "paths needing invalidation: ${paths}"
 
-# todo: just invalidate the entire distro every time
-
-# aws cloudfront create-invalidation \
-#     --distribution-id "${origin_distribution_id}" \
-#     --paths $paths \
-#     --profile "${ABR_PROFILE}"
+aws cloudfront create-invalidation \
+    --distribution-id "${origin_distribution_id}" \
+    --paths '/*' \
+    --profile "${ABR_PROFILE}"

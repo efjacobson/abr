@@ -25,16 +25,20 @@ fi
 
 cd "${selfdir}/origin" || exit 1
 
-fresh_json='false'
-images_json_path="${selfdir}/origin/images.json"
-if [ ! -e "${images_json_path}" ]; then
-    fresh_json='true'
+fresh_mjs='false'
+images_mjs_path="${selfdir}/origin/images.mjs"
+if [ ! -e "${images_mjs_path}" ]; then
+    fresh_mjs='true'
     images="$(jq '.' <<< '[]')"
     while read -r img; do
-        path="image/$(basename "${img}")"
+        extension="${img##*.}"
+        filename_without_extension="${img%.*}"
+        filename_without_optimized="${filename_without_extension%.optimized}"
+        original="${filename_without_optimized}.${extension}"
+        path="image/$(basename "${original}")"
         images="$(jq --arg path "${path}" '. += [$path]' <<< "${images}")"
     done < <(find "${selfdir}/origin/image" -type f -name '*.optimized.jpg')
-    echo "${images}" > "${images_json_path}"
+    echo "export default ${images}" > "${images_mjs_path}"
 fi
 
 while read -r tpl; do
@@ -42,4 +46,7 @@ while read -r tpl; do
         envsubst < "${tpl}" > "${dest}"
 done < <(find "${selfdir}/origin" -type f -name "*.tpl")
 
-python -m http.server 9000; cleanup_tpl && [[ "${fresh_json}" == 'true' ]] && rm "${images_json_path}"
+cp "${selfdir}/origin/getOrigin.mjs" "${selfdir}/origin/getOrigin.mjs.bak"
+echo "export default () => 'http://0.0.0.0:9000';" > "${selfdir}/origin/getOrigin.mjs"
+
+python -m http.server 9000; cleanup_tpl && mv "${selfdir}/origin/getOrigin.mjs.bak" "${selfdir}/origin/getOrigin.mjs" && [[ "${fresh_mjs}" == 'true' ]] && rm "${images_mjs_path}"

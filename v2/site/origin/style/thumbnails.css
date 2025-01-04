@@ -1,0 +1,19 @@
+html {
+    body {
+        margin: 1vw;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        flex-flow: row wrap;
+
+        .image {
+            background-repeat: no-repeat;
+            background-position: center;
+            background-size: contain;
+            background-color: black;
+            width: 20vw;
+            height: 20vw;
+            margin: 2vw;
+        }
+    }
+}

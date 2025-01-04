@@ -251,7 +251,7 @@ Resources:
             Override: true
             Preload: true
           ContentSecurityPolicy:
-            ContentSecurityPolicy: "default-src 'none'; img-src 'self'; script-src 'self'; connect-src 'self'; style-src 'self'; object-src 'none'"
+            ContentSecurityPolicy: "default-src 'none'; img-src 'self' data:; script-src 'self'; connect-src 'self'; style-src 'self'; object-src 'none'"
             Override: true
           ContentTypeOptions:
             Override: true
@@ -274,6 +274,10 @@ Resources:
       Handler: 'index.handler'
       Role: !GetAtt 'OriginResponseEdgeFunctionRole.Arn'
       Runtime: 'nodejs22.x'
+      LoggingConfig:
+        ApplicationLogLevel: 'FATAL'
+        LogFormat: 'JSON'
+        SystemLogLevel: 'WARN'
       Code:
         ZipFile: |
           exports.handler = (event, context, callback) => {
@@ -288,12 +292,16 @@ Resources:
               case 'jpg':
                 sMaxAge *= 24 * 365;
                 break;
+              case 'json':
+              case 'mjs':
+                sMaxAge *= 0.5;
+                break;
               default:
                 sMaxAge *= 24 * 7;
             }
             response.headers['cache-control'] = [{
               key: 'Cache-Control',
-              value: `max-age=${sMaxAge / 2}, public, s-maxage=${sMaxAge}`,
+              value: `max-age=${Math.ceil(sMaxAge / 2)}, public, s-maxage=${sMaxAge}`,
             }];
             callback(null, response);
           }
