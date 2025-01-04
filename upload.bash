@@ -98,13 +98,23 @@ main() {
     exit
   fi
 
-  checksum="$(openssl dgst -sha256 -binary "${src}" | openssl enc -base64)"
+checksumpath="${src}.checksum"
+  if [ -f "${checksumpath}" ]; then
+    checksum="$(cat "${checksumpath}")"
+  else
+    checksum="$(openssl dgst -sha256 -binary "${src}" | openssl enc -base64)"
+    echo "${checksum}" > "${checksumpath}"
+  fi
 
-  head_object_response=$(aws s3api head-object \
+  head_object_response=$(
+    
+  aws s3api head-object \
     --bucket "${bucket_name}" \
     --key "${key}" \
     --checksum-mode ENABLED \
-    --profile "${profile}" 2>&1 | sed '/^$/d')
+    --profile "${profile}" 2>&1 | sed '/^$/d'
+  
+  )
   
   domain_name=$(get_distribution_domain_name "$(get_distribution_nickname "${dest}")")
   alias=$(get_distribution_alias "$(get_distribution_nickname "${dest}")")
@@ -120,6 +130,7 @@ main() {
       echo "abr: uploaded ${src} to s3://${bucket_name}/${key} with sha256 checksum ${checksum}"
       echo "abr: it is available here: https://${domain_name}/${key}"
       echo "abr: and here: https://${alias}/${key}"
+      rm "${checksumpath}"
     fi
 
   elif [ "${checksum}" == "$(jq -r '.ChecksumSHA256' <<<"${head_object_response}")" ]; then
@@ -130,12 +141,15 @@ main() {
   else
 
     if [ "${dry_run}" == 'true' ]; then
-      echo 'dry run:' && printf '%q ' "${cmd[@]}" && echo ''
+      echo 'dry run:'
+      printf '%q ' "${cmd[@]}"
+      echo ''
     else
       "${cmd[@]}"
       echo "abr: uploaded ${src} to s3://$bucket_name/${key} with sha256 checksum ${checksum}"
       echo "abr: it is available here: https://${domain_name}/${key}"
       echo "abr: and here: https://${alias}/${key}"
+      rm "${checksumpath}"
     fi
   fi
 }

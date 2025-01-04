@@ -45,6 +45,6 @@ while read -r item; do
   "${cmd[@]}" >> "${logfile}"
 
   rm "${item}"
-done < <(find hot -type f)
+done < <(find hot -type f ! -name "*.checksum")
 
 rm "${lock}"
