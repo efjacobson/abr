@@ -119,38 +119,26 @@ checksumpath="${src}.checksum"
   domain_name=$(get_distribution_domain_name "$(get_distribution_nickname "${dest}")")
   alias=$(get_distribution_alias "$(get_distribution_nickname "${dest}")")
 
-  if [ 'An error occurred (404) when calling the HeadObject operation: Not Found' == "${head_object_response}" ]; then
-    args=( s3api put-object --bucket "${bucket_name}" --key "${key}" --body "$(realpath "${src}")" --checksum-sha256 "${checksum}" --content-type "$(file --mime-type "${src}" | rev | cut -d ':' -f 1 | rev)" --profile "${profile}" )
-    cmd=( aws "${args[@]}" )
-
-    if [ "${dry_run}" == 'true' ]; then
-      echo 'dry run:' && printf '%q ' "${cmd[@]}" && echo ''
-    else
-      "${cmd[@]}"
-      echo "abr: uploaded ${src} to s3://${bucket_name}/${key} with sha256 checksum ${checksum}"
-      echo "abr: it is available here: https://${domain_name}/${key}"
-      echo "abr: and here: https://${alias}/${key}"
-      rm "${checksumpath}"
-    fi
-
-  elif [ "${checksum}" == "$(jq -r '.ChecksumSHA256' <<<"${head_object_response}")" ]; then
+  if [ "${checksum}" == "$(jq -r '.ChecksumSHA256' <<<"${head_object_response}")" ]; then
     echo 'refusing to upload identical object'
     echo "abr: it is available here: https://${domain_name}/${key}"
     echo "abr: and here: https://${alias}/${key}"
     exit
-  else
+  fi
 
-    if [ "${dry_run}" == 'true' ]; then
-      echo 'dry run:'
-      printf '%q ' "${cmd[@]}"
-      echo ''
-    else
-      "${cmd[@]}"
-      echo "abr: uploaded ${src} to s3://$bucket_name/${key} with sha256 checksum ${checksum}"
-      echo "abr: it is available here: https://${domain_name}/${key}"
-      echo "abr: and here: https://${alias}/${key}"
-      rm "${checksumpath}"
-    fi
+  args=( s3 cp "${src}" "s3://${bucket_name}/${key}" --profile "${profile}" )
+
+  if [ "${dry_run}" == 'true' ]; then
+    cmd=( aws "${args[@]}" --dryrun )
+    echo 'dry run:' && printf '%q ' "${cmd[@]}" && echo ''
+    "${cmd[@]}"
+  else
+    cmd=( aws "${args[@]}" )
+    "${cmd[@]}"
+    echo "abr: uploaded ${src} to s3://${bucket_name}/${key} with sha256 checksum ${checksum}"
+    echo "abr: it is available here: https://${domain_name}/${key}"
+    echo "abr: and here: https://${alias}/${key}"
+    rm "${checksumpath}"
   fi
 }
 

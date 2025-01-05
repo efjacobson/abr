@@ -4,12 +4,15 @@ set -e
 self="$0"
 here="$(dirname "$(realpath "${self}")")"
 cd "${here}" || exit
+logfile="${here}/cron.log"
 
 lock="${here}/cron.lock"
-[ -f "${lock}" ] && echo "$(whoami) running at $(date) (locked)" >> "${logfile}" && exit
+if [ -f "${lock}" ]; then
+  echo "$(whoami) running at $(date) (locked)" >> "${logfile}"
+  exit
+fi
 touch "${lock}"
 
-logfile="${here}/cron.log"
 echo "$(whoami) running at $(date)" >> "${logfile}"
 
 code='abr-main'
